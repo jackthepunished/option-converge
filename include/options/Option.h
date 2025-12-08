@@ -56,12 +56,12 @@ struct OptionParams {
     }
 
     // Helper methods
-    bool isCall() const { return optionType == OptionType::CALL; }
-    bool isPut() const { return optionType == OptionType::PUT; }
-    bool isEuropean() const { return exerciseType == ExerciseType::EUROPEAN; }
-    bool isAmerican() const { return exerciseType == ExerciseType::AMERICAN; }
+    [[nodiscard]] constexpr bool isCall() const noexcept { return optionType == OptionType::CALL; }
+    [[nodiscard]] constexpr bool isPut() const noexcept { return optionType == OptionType::PUT; }
+    [[nodiscard]] constexpr bool isEuropean() const noexcept { return exerciseType == ExerciseType::EUROPEAN; }
+    [[nodiscard]] constexpr bool isAmerican() const noexcept { return exerciseType == ExerciseType::AMERICAN; }
 
-    std::string toString() const;
+    [[nodiscard]] std::string toString() const;
 };
 
 // Structure to hold Greeks
@@ -72,9 +72,18 @@ struct Greeks {
     double theta;    // dV/dT - time decay
     double rho;      // dV/dr - interest rate sensitivity
 
-    Greeks() : delta(0), gamma(0), vega(0), theta(0), rho(0) {}
+    constexpr Greeks() noexcept : delta(0), gamma(0), vega(0), theta(0), rho(0) {}
+    constexpr Greeks(double d, double g, double v, double t, double r) noexcept
+        : delta(d), gamma(g), vega(v), theta(t), rho(r) {}
 
-    std::string toString() const;
+    // Rule of Zero - compiler-generated special members are fine
+    Greeks(const Greeks&) = default;
+    Greeks(Greeks&&) noexcept = default;
+    Greeks& operator=(const Greeks&) = default;
+    Greeks& operator=(Greeks&&) noexcept = default;
+    ~Greeks() = default;
+
+    [[nodiscard]] std::string toString() const;
 };
 
 // Structure to hold pricing results
@@ -85,10 +94,17 @@ struct PricingResult {
     double computationTime;  // In milliseconds
     size_t memoryUsed;       // In bytes
 
-    PricingResult() : price(0), standardError(0),
-                     computationTime(0), memoryUsed(0) {}
+    constexpr PricingResult() noexcept : price(0), greeks(), standardError(0),
+                                         computationTime(0), memoryUsed(0) {}
 
-    std::string toString() const;
+    // Rule of Zero - compiler-generated special members are fine
+    PricingResult(const PricingResult&) = default;
+    PricingResult(PricingResult&&) noexcept = default;
+    PricingResult& operator=(const PricingResult&) = default;
+    PricingResult& operator=(PricingResult&&) noexcept = default;
+    ~PricingResult() = default;
+
+    [[nodiscard]] std::string toString() const;
 };
 
 } // namespace Options

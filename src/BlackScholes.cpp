@@ -17,15 +17,51 @@ PricingResult BlackScholes::price(const OptionParams& params) {
 
     PricingResult result;
 
-    // Calculate price
+    // Pre-calculate all values once for both price and Greeks
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
+    const double sqrtT = std::sqrt(T);
+
+    const double d1_val = (std::log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    const double d2_val = d1_val - sigma * sqrtT;
+
+    const double Nd1 = normalCDF(d1_val);
+    const double Nd2 = normalCDF(d2_val);
+    const double nd1 = normalPDF(d1_val);
+    const double expMinusQT = std::exp(-q * T);
+    const double expMinusRT = std::exp(-r * T);
+
+    // Calculate price using cached values
     if (params.isCall()) {
-        result.price = callPrice(params);
+        result.price = S * expMinusQT * Nd1 - K * expMinusRT * Nd2;
+
+        // Calculate Greeks for call
+        result.greeks.delta = expMinusQT * Nd1;
+        result.greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
+                              + r * K * expMinusRT * Nd2
+                              - q * S * expMinusQT * Nd1) / 365.0;
+        result.greeks.rho = K * T * expMinusRT * Nd2 / 100.0;
     } else {
-        result.price = putPrice(params);
+        const double NminusD1 = normalCDF(-d1_val);
+        const double NminusD2 = normalCDF(-d2_val);
+
+        result.price = K * expMinusRT * NminusD2 - S * expMinusQT * NminusD1;
+
+        // Calculate Greeks for put
+        result.greeks.delta = -expMinusQT * NminusD1;
+        result.greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
+                              - r * K * expMinusRT * NminusD2
+                              + q * S * expMinusQT * NminusD1) / 365.0;
+        result.greeks.rho = -K * T * expMinusRT * NminusD2 / 100.0;
     }
 
-    // Calculate Greeks analytically
-    result.greeks = calculateGreeks(params);
+    // Gamma and Vega are the same for calls and puts
+    result.greeks.gamma = expMinusQT * nd1 / (S * sigma * sqrtT);
+    result.greeks.vega = S * expMinusQT * nd1 * sqrtT / 100.0;
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -38,124 +74,148 @@ PricingResult BlackScholes::price(const OptionParams& params) {
 Greeks BlackScholes::calculateGreeks(const OptionParams& params) {
     Greeks greeks;
 
+    // Pre-calculate common values once
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
+    const double sqrtT = std::sqrt(T);
+
+    const double d1_val = (std::log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    const double d2_val = d1_val - sigma * sqrtT;
+
+    const double Nd1 = normalCDF(d1_val);
+    const double Nd2 = normalCDF(d2_val);
+    const double nd1 = normalPDF(d1_val);
+    const double expMinusQT = std::exp(-q * T);
+    const double expMinusRT = std::exp(-r * T);
+
+    // Calculate all Greeks using cached values
     if (params.isCall()) {
-        greeks.delta = callDelta(params);
-        greeks.theta = callTheta(params);
-        greeks.rho = callRho(params);
+        greeks.delta = expMinusQT * Nd1;
+        greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
+                       + r * K * expMinusRT * Nd2
+                       - q * S * expMinusQT * Nd1) / 365.0;
+        greeks.rho = K * T * expMinusRT * Nd2 / 100.0;
     } else {
-        greeks.delta = putDelta(params);
-        greeks.theta = putTheta(params);
-        greeks.rho = putRho(params);
+        greeks.delta = -expMinusQT * normalCDF(-d1_val);
+        greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
+                       - r * K * expMinusRT * normalCDF(-d2_val)
+                       + q * S * expMinusQT * normalCDF(-d1_val)) / 365.0;
+        greeks.rho = -K * T * expMinusRT * normalCDF(-d2_val) / 100.0;
     }
 
     // Gamma and Vega are the same for calls and puts
-    greeks.gamma = gamma(params);
-    greeks.vega = vega(params);
+    greeks.gamma = expMinusQT * nd1 / (S * sigma * sqrtT);
+    greeks.vega = S * expMinusQT * nd1 * sqrtT / 100.0;
 
     return greeks;
 }
 
 // Calculate d1 parameter for Black-Scholes
-double BlackScholes::d1(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double q = params.dividendYield;
-    double sigma = params.volatility;
-    double T = params.timeToMaturity;
+inline double BlackScholes::d1(const OptionParams& params) const noexcept {
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
 
     return (std::log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * std::sqrt(T));
 }
 
 // Calculate d2 parameter for Black-Scholes
-double BlackScholes::d2(const OptionParams& params) const {
-    double sigma = params.volatility;
-    double T = params.timeToMaturity;
+inline double BlackScholes::d2(const OptionParams& params) const noexcept {
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
 
     return d1(params) - sigma * std::sqrt(T);
 }
 
 // Standard normal cumulative distribution function
-double BlackScholes::normalCDF(double x) const {
+inline double BlackScholes::normalCDF(double x) const noexcept {
     // Using approximation for standard normal CDF
     // More accurate implementation would use erf() function
     return 0.5 * std::erfc(-x * M_SQRT1_2);
 }
 
 // Standard normal probability density function
-double BlackScholes::normalPDF(double x) const {
-    return (1.0 / std::sqrt(2.0 * M_PI)) * std::exp(-0.5 * x * x);
+inline double BlackScholes::normalPDF(double x) const noexcept {
+    constexpr double inv_sqrt_2pi = 0.3989422804014327; // 1/sqrt(2π) precomputed
+    return inv_sqrt_2pi * std::exp(-0.5 * x * x);
 }
 
 // Calculate call option price
 double BlackScholes::callPrice(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double q = params.dividendYield;
-    double T = params.timeToMaturity;
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double T = params.timeToMaturity;
 
-    double d1_val = d1(params);
-    double d2_val = d2(params);
+    const double d1_val = d1(params);
+    const double d2_val = d2(params);
 
-    double Nd1 = normalCDF(d1_val);
-    double Nd2 = normalCDF(d2_val);
+    const double Nd1 = normalCDF(d1_val);
+    const double Nd2 = normalCDF(d2_val);
 
     return S * std::exp(-q * T) * Nd1 - K * std::exp(-r * T) * Nd2;
 }
 
 // Calculate put option price
 double BlackScholes::putPrice(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double q = params.dividendYield;
-    double T = params.timeToMaturity;
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double T = params.timeToMaturity;
 
-    double d1_val = d1(params);
-    double d2_val = d2(params);
+    const double d1_val = d1(params);
+    const double d2_val = d2(params);
 
-    double Nminusd1 = normalCDF(-d1_val);
-    double Nminusd2 = normalCDF(-d2_val);
+    const double Nminusd1 = normalCDF(-d1_val);
+    const double Nminusd2 = normalCDF(-d2_val);
 
     return K * std::exp(-r * T) * Nminusd2 - S * std::exp(-q * T) * Nminusd1;
 }
 
 // Calculate call delta
 double BlackScholes::callDelta(const OptionParams& params) const {
-    double q = params.dividendYield;
-    double T = params.timeToMaturity;
-    double d1_val = d1(params);
+    const double q = params.dividendYield;
+    const double T = params.timeToMaturity;
+    const double d1_val = d1(params);
 
     return std::exp(-q * T) * normalCDF(d1_val);
 }
 
 // Calculate put delta
 double BlackScholes::putDelta(const OptionParams& params) const {
-    double q = params.dividendYield;
-    double T = params.timeToMaturity;
-    double d1_val = d1(params);
+    const double q = params.dividendYield;
+    const double T = params.timeToMaturity;
+    const double d1_val = d1(params);
 
     return -std::exp(-q * T) * normalCDF(-d1_val);
 }
 
 // Calculate gamma (same for calls and puts)
 double BlackScholes::gamma(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double q = params.dividendYield;
-    double sigma = params.volatility;
-    double T = params.timeToMaturity;
-    double d1_val = d1(params);
+    const double S = params.spotPrice;
+    const double q = params.dividendYield;
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
+    const double d1_val = d1(params);
 
     return std::exp(-q * T) * normalPDF(d1_val) / (S * sigma * std::sqrt(T));
 }
 
 // Calculate vega (same for calls and puts)
 double BlackScholes::vega(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double q = params.dividendYield;
-    double T = params.timeToMaturity;
-    double d1_val = d1(params);
+    const double S = params.spotPrice;
+    const double q = params.dividendYield;
+    const double T = params.timeToMaturity;
+    const double d1_val = d1(params);
 
     // Vega is typically quoted per 1% change in volatility
     // So we divide by 100 to get the sensitivity per 0.01 change
@@ -164,19 +224,19 @@ double BlackScholes::vega(const OptionParams& params) const {
 
 // Calculate call theta
 double BlackScholes::callTheta(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double q = params.dividendYield;
-    double sigma = params.volatility;
-    double T = params.timeToMaturity;
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
 
-    double d1_val = d1(params);
-    double d2_val = d2(params);
+    const double d1_val = d1(params);
+    const double d2_val = d2(params);
 
-    double term1 = -(S * normalPDF(d1_val) * sigma * std::exp(-q * T)) / (2.0 * std::sqrt(T));
-    double term2 = r * K * std::exp(-r * T) * normalCDF(d2_val);
-    double term3 = -q * S * std::exp(-q * T) * normalCDF(d1_val);
+    const double term1 = -(S * normalPDF(d1_val) * sigma * std::exp(-q * T)) / (2.0 * std::sqrt(T));
+    const double term2 = r * K * std::exp(-r * T) * normalCDF(d2_val);
+    const double term3 = -q * S * std::exp(-q * T) * normalCDF(d1_val);
 
     // Return daily theta (divide by 365)
     return (term1 + term2 + term3) / 365.0;
@@ -184,19 +244,19 @@ double BlackScholes::callTheta(const OptionParams& params) const {
 
 // Calculate put theta
 double BlackScholes::putTheta(const OptionParams& params) const {
-    double S = params.spotPrice;
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double q = params.dividendYield;
-    double sigma = params.volatility;
-    double T = params.timeToMaturity;
+    const double S = params.spotPrice;
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double q = params.dividendYield;
+    const double sigma = params.volatility;
+    const double T = params.timeToMaturity;
 
-    double d1_val = d1(params);
-    double d2_val = d2(params);
+    const double d1_val = d1(params);
+    const double d2_val = d2(params);
 
-    double term1 = -(S * normalPDF(d1_val) * sigma * std::exp(-q * T)) / (2.0 * std::sqrt(T));
-    double term2 = -r * K * std::exp(-r * T) * normalCDF(-d2_val);
-    double term3 = q * S * std::exp(-q * T) * normalCDF(-d1_val);
+    const double term1 = -(S * normalPDF(d1_val) * sigma * std::exp(-q * T)) / (2.0 * std::sqrt(T));
+    const double term2 = -r * K * std::exp(-r * T) * normalCDF(-d2_val);
+    const double term3 = q * S * std::exp(-q * T) * normalCDF(-d1_val);
 
     // Return daily theta (divide by 365)
     return (term1 + term2 + term3) / 365.0;
@@ -204,10 +264,10 @@ double BlackScholes::putTheta(const OptionParams& params) const {
 
 // Calculate call rho
 double BlackScholes::callRho(const OptionParams& params) const {
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double T = params.timeToMaturity;
-    double d2_val = d2(params);
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double T = params.timeToMaturity;
+    const double d2_val = d2(params);
 
     // Rho is typically quoted per 1% change in interest rate
     // So we divide by 100 to get the sensitivity per 0.01 change
@@ -216,10 +276,10 @@ double BlackScholes::callRho(const OptionParams& params) const {
 
 // Calculate put rho
 double BlackScholes::putRho(const OptionParams& params) const {
-    double K = params.strikePrice;
-    double r = params.riskFreeRate;
-    double T = params.timeToMaturity;
-    double d2_val = d2(params);
+    const double K = params.strikePrice;
+    const double r = params.riskFreeRate;
+    const double T = params.timeToMaturity;
+    const double d2_val = d2(params);
 
     // Rho is typically quoted per 1% change in interest rate
     // So we divide by 100 to get the sensitivity per 0.01 change

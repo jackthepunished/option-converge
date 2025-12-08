@@ -10,22 +10,31 @@ class PricingEngine {
 public:
     virtual ~PricingEngine() = default;
 
+    // Prevent copying and moving of base class
+    PricingEngine(const PricingEngine&) = delete;
+    PricingEngine(PricingEngine&&) = delete;
+    PricingEngine& operator=(const PricingEngine&) = delete;
+    PricingEngine& operator=(PricingEngine&&) = delete;
+
     // Pure virtual function for pricing
-    virtual PricingResult price(const OptionParams& params) = 0;
+    [[nodiscard]] virtual PricingResult price(const OptionParams& params) = 0;
 
     // Calculate Greeks (default implementation uses finite differences)
-    virtual Greeks calculateGreeks(const OptionParams& params);
+    [[nodiscard]] virtual Greeks calculateGreeks(const OptionParams& params);
 
     // Get engine name
-    virtual std::string getName() const = 0;
+    [[nodiscard]] virtual std::string getName() const = 0;
 
 protected:
+    // Default constructor for derived classes
+    PricingEngine() = default;
+
     // Helper function for finite difference Greeks
-    double calculateDelta(const OptionParams& params, double h = 0.01);
-    double calculateGamma(const OptionParams& params, double h = 0.01);
-    double calculateVega(const OptionParams& params, double h = 0.01);
-    double calculateTheta(const OptionParams& params, double h = 1.0/365.0);
-    double calculateRho(const OptionParams& params, double h = 0.01);
+    [[nodiscard]] double calculateDelta(const OptionParams& params, double h = 0.01);
+    [[nodiscard]] double calculateGamma(const OptionParams& params, double h = 0.01);
+    [[nodiscard]] double calculateVega(const OptionParams& params, double h = 0.01);
+    [[nodiscard]] double calculateTheta(const OptionParams& params, double h = 1.0/365.0);
+    [[nodiscard]] double calculateRho(const OptionParams& params, double h = 0.01);
 };
 
 } // namespace Options

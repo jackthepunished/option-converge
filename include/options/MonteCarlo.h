@@ -22,32 +22,39 @@ enum class VarianceReduction {
 };
 
 // Monte Carlo simulation pricing engine
-class MonteCarlo : public PricingEngine {
+class MonteCarlo final : public PricingEngine {
 public:
     // Constructor
     explicit MonteCarlo(size_t numPaths = 10000,
                        DiscretizationScheme scheme = DiscretizationScheme::EULER,
                        VarianceReduction varRed = VarianceReduction::ANTITHETIC,
                        unsigned int seed = 42);
+    ~MonteCarlo() override = default;
+
+    // Allow copying and moving
+    MonteCarlo(const MonteCarlo&) = default;
+    MonteCarlo(MonteCarlo&&) noexcept = default;
+    MonteCarlo& operator=(const MonteCarlo&) = default;
+    MonteCarlo& operator=(MonteCarlo&&) noexcept = default;
 
     // Price an option using Monte Carlo simulation
-    PricingResult price(const OptionParams& params) override;
+    [[nodiscard]] PricingResult price(const OptionParams& params) override;
 
     // Calculate Greeks using pathwise derivatives or finite differences
-    Greeks calculateGreeks(const OptionParams& params) override;
+    [[nodiscard]] Greeks calculateGreeks(const OptionParams& params) override;
 
-    std::string getName() const override;
+    [[nodiscard]] std::string getName() const override;
 
     // Setters
-    void setNumPaths(size_t numPaths) { numPaths_ = numPaths; }
-    void setScheme(DiscretizationScheme scheme) { scheme_ = scheme; }
-    void setVarianceReduction(VarianceReduction varRed) { varRed_ = varRed; }
+    void setNumPaths(size_t numPaths) noexcept { numPaths_ = numPaths; }
+    void setScheme(DiscretizationScheme scheme) noexcept { scheme_ = scheme; }
+    void setVarianceReduction(VarianceReduction varRed) noexcept { varRed_ = varRed; }
     void setSeed(unsigned int seed);
 
     // Getters
-    size_t getNumPaths() const { return numPaths_; }
-    DiscretizationScheme getScheme() const { return scheme_; }
-    VarianceReduction getVarianceReduction() const { return varRed_; }
+    [[nodiscard]] size_t getNumPaths() const noexcept { return numPaths_; }
+    [[nodiscard]] DiscretizationScheme getScheme() const noexcept { return scheme_; }
+    [[nodiscard]] VarianceReduction getVarianceReduction() const noexcept { return varRed_; }
 
 private:
     size_t numPaths_;
@@ -56,31 +63,31 @@ private:
     std::mt19937 rng_;
 
     // Simulate one path using Euler scheme
-    double simulatePathEuler(const OptionParams& params);
+    [[nodiscard]] double simulatePathEuler(const OptionParams& params);
 
     // Simulate one path using Milstein scheme
-    double simulatePathMilstein(const OptionParams& params);
+    [[nodiscard]] double simulatePathMilstein(const OptionParams& params);
 
     // Calculate payoff at maturity
-    double payoff(double finalPrice, const OptionParams& params) const;
+    [[nodiscard]] double payoff(double finalPrice, const OptionParams& params) const noexcept;
 
     // Standard normal random number
-    double randomNormal();
+    [[nodiscard]] double randomNormal();
 
     // Price with basic Monte Carlo
-    double priceBasic(const OptionParams& params, double& stdError);
+    [[nodiscard]] double priceBasic(const OptionParams& params, double& stdError);
 
     // Price with antithetic variates
-    double priceAntithetic(const OptionParams& params, double& stdError);
+    [[nodiscard]] double priceAntithetic(const OptionParams& params, double& stdError);
 
     // Price with control variates (using Black-Scholes)
-    double priceControlVariate(const OptionParams& params, double& stdError);
+    [[nodiscard]] double priceControlVariate(const OptionParams& params, double& stdError);
 
     // Price with both variance reduction techniques
-    double priceBoth(const OptionParams& params, double& stdError);
+    [[nodiscard]] double priceBoth(const OptionParams& params, double& stdError);
 
     // Calculate standard error
-    double calculateStandardError(const std::vector<double>& payoffs) const;
+    [[nodiscard]] double calculateStandardError(const std::vector<double>& payoffs) const;
 };
 
 } // namespace Options

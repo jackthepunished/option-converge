@@ -6,11 +6,36 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Compiler flags
+# Compiler flags for maximum performance
 if(MSVC)
-    add_compile_options(/W4 /O2)
+    # MSVC optimization flags
+    add_compile_options(
+        /W4                    # Warning level 4
+        /O2                    # Maximize speed
+        /Oi                    # Enable intrinsic functions
+        /Ot                    # Favor fast code
+        /GL                    # Whole program optimization
+        /fp:fast               # Fast floating point model
+        /arch:AVX2             # Enable AVX2 instructions (if supported)
+    )
+    # Linker flags for MSVC
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /LTCG")
+    set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /LTCG")
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic -O3 -march=native)
+    # GCC/Clang optimization flags
+    add_compile_options(
+        -Wall                  # Enable all warnings
+        -Wextra                # Extra warnings
+        -Wpedantic             # Pedantic warnings
+        -O3                    # Maximum optimization
+        -march=native          # Optimize for current CPU
+        -mtune=native          # Tune for current CPU
+        -ffast-math            # Fast math operations
+        -funroll-loops         # Unroll loops
+        -finline-functions     # Inline functions
+        -flto                  # Link-time optimization
+    )
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
 endif()
 
 # Include directories

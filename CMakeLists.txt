@@ -6,36 +6,30 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Compiler flags for maximum performance
+# Warnings always; optimization flags only in Release so Debug builds stay
+# debuggable and do not collide with MSVC's /RTC1 runtime checks.
 if(MSVC)
-    # MSVC optimization flags
     add_compile_options(
         /W4                    # Warning level 4
-        /O2                    # Maximize speed
-        /Oi                    # Enable intrinsic functions
-        /Ot                    # Favor fast code
-        /GL                    # Whole program optimization
-        /fp:fast               # Fast floating point model
-        /arch:AVX2             # Enable AVX2 instructions (if supported)
+        "$<$<CONFIG:Release>:/O2;/Oi;/Ot;/GL;/fp:fast;/arch:AVX2>"
     )
-    # Linker flags for MSVC
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /LTCG")
-    set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /LTCG")
+    # /LTCG pairs with /GL, so Release only
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
+    set(CMAKE_STATIC_LINKER_FLAGS_RELEASE "${CMAKE_STATIC_LINKER_FLAGS_RELEASE} /LTCG")
 else()
-    # GCC/Clang optimization flags
     add_compile_options(
         -Wall                  # Enable all warnings
         -Wextra                # Extra warnings
         -Wpedantic             # Pedantic warnings
-        -O3                    # Maximum optimization
-        -march=native          # Optimize for current CPU
-        -mtune=native          # Tune for current CPU
-        -ffast-math            # Fast math operations
-        -funroll-loops         # Unroll loops
-        -finline-functions     # Inline functions
-        -flto                  # Link-time optimization
+        "$<$<CONFIG:Release>:-O3;-ffast-math;-funroll-loops;-finline-functions;-flto>"
     )
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
+    # Not every compiler accepts -march=native (e.g. older Apple Clang on arm64)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+    if(COMPILER_SUPPORTS_MARCH_NATIVE)
+        add_compile_options("$<$<CONFIG:Release>:-march=native;-mtune=native>")
+    endif()
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto")
 endif()
 
 # Include directories

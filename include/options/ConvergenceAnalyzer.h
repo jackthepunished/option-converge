@@ -3,6 +3,7 @@
 
 #include "Option.h"
 #include "PricingEngine.h"
+#include "MonteCarlo.h"
 #include <vector>
 #include <string>
 #include <memory>

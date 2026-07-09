@@ -42,8 +42,8 @@ PricingResult BlackScholes::price(const OptionParams& params) {
         // Calculate Greeks for call
         result.greeks.delta = expMinusQT * Nd1;
         result.greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
-                              + r * K * expMinusRT * Nd2
-                              - q * S * expMinusQT * Nd1) / 365.0;
+                              - r * K * expMinusRT * Nd2
+                              + q * S * expMinusQT * Nd1) / 365.0;
         result.greeks.rho = K * T * expMinusRT * Nd2 / 100.0;
     } else {
         const double NminusD1 = normalCDF(-d1_val);
@@ -54,8 +54,8 @@ PricingResult BlackScholes::price(const OptionParams& params) {
         // Calculate Greeks for put
         result.greeks.delta = -expMinusQT * NminusD1;
         result.greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
-                              - r * K * expMinusRT * NminusD2
-                              + q * S * expMinusQT * NminusD1) / 365.0;
+                              + r * K * expMinusRT * NminusD2
+                              - q * S * expMinusQT * NminusD1) / 365.0;
         result.greeks.rho = -K * T * expMinusRT * NminusD2 / 100.0;
     }
 
@@ -96,14 +96,14 @@ Greeks BlackScholes::calculateGreeks(const OptionParams& params) {
     if (params.isCall()) {
         greeks.delta = expMinusQT * Nd1;
         greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
-                       + r * K * expMinusRT * Nd2
-                       - q * S * expMinusQT * Nd1) / 365.0;
+                       - r * K * expMinusRT * Nd2
+                       + q * S * expMinusQT * Nd1) / 365.0;
         greeks.rho = K * T * expMinusRT * Nd2 / 100.0;
     } else {
         greeks.delta = -expMinusQT * normalCDF(-d1_val);
         greeks.theta = (-(S * nd1 * sigma * expMinusQT) / (2.0 * sqrtT)
-                       - r * K * expMinusRT * normalCDF(-d2_val)
-                       + q * S * expMinusQT * normalCDF(-d1_val)) / 365.0;
+                       + r * K * expMinusRT * normalCDF(-d2_val)
+                       - q * S * expMinusQT * normalCDF(-d1_val)) / 365.0;
         greeks.rho = -K * T * expMinusRT * normalCDF(-d2_val) / 100.0;
     }
 
@@ -136,9 +136,8 @@ inline double BlackScholes::d2(const OptionParams& params) const noexcept {
 
 // Standard normal cumulative distribution function
 inline double BlackScholes::normalCDF(double x) const noexcept {
-    // Using approximation for standard normal CDF
-    // More accurate implementation would use erf() function
-    return 0.5 * std::erfc(-x * M_SQRT1_2);
+    constexpr double INV_SQRT2 = 0.70710678118654752440;
+    return 0.5 * std::erfc(-x * INV_SQRT2);
 }
 
 // Standard normal probability density function
@@ -235,8 +234,8 @@ double BlackScholes::callTheta(const OptionParams& params) const {
     const double d2_val = d2(params);
 
     const double term1 = -(S * normalPDF(d1_val) * sigma * std::exp(-q * T)) / (2.0 * std::sqrt(T));
-    const double term2 = r * K * std::exp(-r * T) * normalCDF(d2_val);
-    const double term3 = -q * S * std::exp(-q * T) * normalCDF(d1_val);
+    const double term2 = -r * K * std::exp(-r * T) * normalCDF(d2_val);
+    const double term3 = q * S * std::exp(-q * T) * normalCDF(d1_val);
 
     // Return daily theta (divide by 365)
     return (term1 + term2 + term3) / 365.0;
@@ -255,8 +254,8 @@ double BlackScholes::putTheta(const OptionParams& params) const {
     const double d2_val = d2(params);
 
     const double term1 = -(S * normalPDF(d1_val) * sigma * std::exp(-q * T)) / (2.0 * std::sqrt(T));
-    const double term2 = -r * K * std::exp(-r * T) * normalCDF(-d2_val);
-    const double term3 = q * S * std::exp(-q * T) * normalCDF(-d1_val);
+    const double term2 = r * K * std::exp(-r * T) * normalCDF(-d2_val);
+    const double term3 = -q * S * std::exp(-q * T) * normalCDF(-d1_val);
 
     // Return daily theta (divide by 365)
     return (term1 + term2 + term3) / 365.0;

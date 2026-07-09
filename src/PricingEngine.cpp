@@ -53,8 +53,8 @@ double PricingEngine::calculateVega(const OptionParams& params, double h) {
     paramsDown.volatility -= h;
     const double priceDown = price(paramsDown).price;
 
-    // Vega is typically quoted per 1% change in volatility
-    return (priceUp - priceDown) / (2.0 * h);
+    // Vega is quoted per 1% change in volatility, matching the analytic engine
+    return (priceUp - priceDown) / (2.0 * h) / 100.0;
 }
 
 // Theta: dV/dT (time decay)
@@ -71,8 +71,8 @@ double PricingEngine::calculateTheta(const OptionParams& params, double h) {
     const double priceForward = price(paramsForward).price;
 
     // Theta is negative for long positions (time decay)
-    // Return daily theta (per day)
-    return (priceForward - priceNow) / h;
+    // Return daily theta (per day), matching the analytic engine
+    return (priceForward - priceNow) / h / 365.0;
 }
 
 // Rho: dV/dr (sensitivity to interest rate)
@@ -85,8 +85,8 @@ double PricingEngine::calculateRho(const OptionParams& params, double h) {
     paramsDown.riskFreeRate -= h;
     const double priceDown = price(paramsDown).price;
 
-    // Rho is typically quoted per 1% change in interest rate
-    return (priceUp - priceDown) / (2.0 * h);
+    // Rho is quoted per 1% change in interest rate, matching the analytic engine
+    return (priceUp - priceDown) / (2.0 * h) / 100.0;
 }
 
 } // namespace Options

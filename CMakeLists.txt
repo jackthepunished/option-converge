@@ -53,10 +53,10 @@ set(SOURCES
     src/Option.cpp
     src/PricingEngine.cpp
     src/BlackScholes.cpp
-    # src/BinomialTree.cpp
-    # src/MonteCarlo.cpp
-    # src/ConvergenceAnalyzer.cpp
-    # src/PerformanceBenchmark.cpp
+    src/BinomialTree.cpp
+    src/MonteCarlo.cpp
+    src/ConvergenceAnalyzer.cpp
+    src/PerformanceBenchmark.cpp
 )
 
 # Create library
@@ -66,17 +66,17 @@ if(OpenMP_CXX_FOUND)
     target_link_libraries(optionslib PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-# Main executable (commented out until main.cpp is implemented)
-# add_executable(option_pricer src/main.cpp)
-# target_link_libraries(option_pricer optionslib)
+# Main executable
+add_executable(option_pricer src/main.cpp)
+target_link_libraries(option_pricer optionslib)
 
-# Test executable (commented out until tests are implemented)
-# add_executable(option_tests tests/test_main.cpp)
-# target_link_libraries(option_tests optionslib)
+# Test executable
+add_executable(option_tests tests/test_main.cpp)
+target_link_libraries(option_tests optionslib)
 
 # Enable testing
-# enable_testing()
-# add_test(NAME OptionTests COMMAND option_tests)
+enable_testing()
+add_test(NAME OptionTests COMMAND option_tests)
 
 # Installation
 # install(TARGETS option_pricer DESTINATION bin)

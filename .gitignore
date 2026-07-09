@@ -1,1 +1,7 @@
 build/
+
+# Generated analysis output
+results/
+
+# macOS
+.DS_Store

@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 140-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 145-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -59,7 +59,7 @@ The table below reflects what is compiled into the library today, not what is pl
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 140 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 145 checks under CTest, no framework dependency |
 
 ---
 
@@ -100,7 +100,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 140-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 145-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -314,25 +314,29 @@ rates, and the Greeks are precisely the coefficients that say how much of each r
 | Theta | `∂V/∂t` | Time decay | Carry earned or paid by holding the position |
 | Rho | `∂V/∂r` | Sensitivity to the risk-free rate | Rate exposure, material for long-dated options |
 
-Two mechanisms supply them:
+Three mechanisms supply them:
 
 - **Analytic** — `BlackScholes` overrides `calculateGreeks` with exact closed-form derivatives, at
   the cost of a single evaluation and with no truncation error.
+- **Tree nodes** — `BinomialTree` reads Delta and Gamma directly off its step-1 and step-2 node
+  layers, which backward induction produces anyway. The early layers are exact repricings at the
+  lattice's own spot bumps, so no off-lattice bump — and none of its noise — is involved.
 - **Finite difference** — `PricingEngine` provides central-difference defaults that re-price at
   bumped inputs. Any engine inherits working Greeks without additional code. Delta, for instance, is
-  `(V(S+h) - V(S-h)) / 2h`.
+  `(V(S+h) - V(S-h)) / 2h`. The lattice keeps these for Vega, Theta, and Rho, which bump
+  parameters the tree has no second copy of.
 
-Delta from the 1000-step lattice agrees with the analytic value to within `9 × 10⁻⁵`, which is a
+Delta and Gamma from the 1000-step lattice agree with the analytic values to within `10⁻⁴`, a
 useful end-to-end check that the lattice and the formula describe the same model.
 
 All engines use the same conventions: Vega and Rho per 1% move, Theta per calendar day. The test
-suite verifies that the lattice's finite-difference Delta, Vega, Theta, and Rho agree with the
-analytic values under those conventions.
+suite verifies that the lattice's Delta, Gamma, Vega, Theta, and Rho agree with the analytic
+values under those conventions.
 
-> [!WARNING]
+> [!NOTE]
 > Second-order finite differences on a lattice are unreliable: the lattice price is not smooth in
-> `S`, so the default Gamma bump of `h = 0.01` lands well inside the noise floor. Take Gamma from
-> the analytic engine, or extract it directly from the tree nodes. See
+> `S`, so a spot bump lands inside the noise floor. This is why the lattice's Gamma comes from the
+> tree nodes rather than from bumping — the historical failure mode is described under
 > [Known Limitations](#known-limitations).
 
 ---
@@ -578,10 +582,11 @@ Ordered roughly by dependency, not by ambition.
 Stated explicitly, because a pricing library that is quiet about its error modes is worse than one
 that has none.
 
-1. **Finite-difference Gamma is unusable on the lattice.** The default bump `h = 0.01` on a
-   non-smooth lattice price sits well inside the noise floor. A bump scaled to the lattice
-   spacing, or Greeks extracted directly from the tree nodes, is the correct fix. Take Gamma from
-   the analytic engine where one exists.
+1. **Second-order spot bumps do not work on a lattice** — the price is piecewise-linear in `S`,
+   so finite-difference Gamma sits inside the noise floor. The lattice therefore extracts Delta
+   and Gamma from its own tree nodes (fixed; regression tested against the analytic values).
+   A tree shallower than two steps cannot supply node Greeks and falls back to finite
+   differences, noise and all.
 2. **`-ffast-math` is enabled by default**, with the caveats described under
    [Performance](#performance).
 3. **Discrete dividends are modelled as an enum value only** (`DividendType::DISCRETE`); no engine
@@ -714,7 +719,7 @@ option-converge/
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
 └── tests/
-    └── test_main.cpp           140-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           145-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

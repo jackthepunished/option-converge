@@ -58,7 +58,8 @@ double BinomialTree::earlyExerciseValue(double spotPrice, const OptionParams& pa
 
 // Backward induction over a single rolling vector of node values.
 // Memory is O(steps) rather than the O(steps^2) a full tree would need.
-double BinomialTree::priceIterative(const OptionParams& params) const {
+double BinomialTree::priceIterative(const OptionParams& params,
+                                    NodeGreeks* nodeGreeks) const {
     const Lattice lat = buildLattice(params, steps_);
     const size_t n = steps_;
 
@@ -72,6 +73,19 @@ double BinomialTree::priceIterative(const OptionParams& params) const {
     }
 
     const bool american = params.isAmerican();
+    if (nodeGreeks != nullptr) {
+        nodeGreeks->valid = false;
+        // On a two-step tree the step-2 layer IS the terminal layer, so the
+        // in-loop capture below would never see it.
+        if (n == 2) {
+            const double s = params.spotPrice;
+            const double sUU = s * lat.u * lat.u;
+            const double sDD = s * lat.d * lat.d;
+            const double deltaUp = (values[2] - values[1]) / (sUU - s);
+            const double deltaDown = (values[1] - values[0]) / (s - sDD);
+            nodeGreeks->gamma = (deltaUp - deltaDown) / (0.5 * (sUU - sDD));
+        }
+    }
 
     for (size_t step = n; step-- > 0;) {
         for (size_t i = 0; i <= step; ++i) {
@@ -86,6 +100,24 @@ double BinomialTree::priceIterative(const OptionParams& params) const {
             } else {
                 values[i] = continuation;
             }
+        }
+
+        // The step-2 and step-1 layers are repricings at the lattice's own
+        // bumped spots; differencing them gives Delta and Gamma with no
+        // extra work and no off-lattice bump.
+        if (nodeGreeks != nullptr && n >= 2 && step == 2) {
+            const double s = params.spotPrice;
+            const double sUU = s * lat.u * lat.u;
+            const double sDD = s * lat.d * lat.d;
+            const double deltaUp = (values[2] - values[1]) / (sUU - s);
+            const double deltaDown = (values[1] - values[0]) / (s - sDD);
+            nodeGreeks->gamma = (deltaUp - deltaDown) / (0.5 * (sUU - sDD));
+        }
+        if (nodeGreeks != nullptr && n >= 2 && step == 1) {
+            const double sU = params.spotPrice * lat.u;
+            const double sD = params.spotPrice * lat.d;
+            nodeGreeks->delta = (values[1] - values[0]) / (sU - sD);
+            nodeGreeks->valid = true;
         }
     }
 
@@ -183,8 +215,26 @@ PricingResult BinomialTree::price(const OptionParams& params) {
 }
 
 Greeks BinomialTree::calculateGreeks(const OptionParams& params) {
-    // No closed form on a lattice; fall back to the finite-difference Greeks.
-    return PricingEngine::calculateGreeks(params);
+    // Delta and Gamma come from the tree itself: the early node layers are
+    // exact repricings at the lattice's own spot bumps, which sidesteps the
+    // noise-floor problem of differencing a piecewise-linear price. Vega,
+    // Theta, and Rho bump parameters the lattice has no second copy of, so
+    // they stay finite-difference (per 1% / per day conventions).
+    Greeks greeks;
+    NodeGreeks node;
+    (void)priceIterative(params, &node);
+
+    if (node.valid) {
+        greeks.delta = node.delta;
+        greeks.gamma = node.gamma;
+    } else {
+        greeks.delta = calculateDelta(params);
+        greeks.gamma = calculateGamma(params);
+    }
+    greeks.vega = calculateVega(params);
+    greeks.theta = calculateTheta(params);
+    greeks.rho = calculateRho(params);
+    return greeks;
 }
 
 } // namespace Options

@@ -416,7 +416,15 @@ the same lattice for comparison.
 | 5000 | 5.573126 | 4.00 × 10⁻⁴ | 6.090219 |
 
 The error halves as the step count doubles, confirming the `O(1/N)` convergence characteristic of the
-CRR lattice. The American put is worth `0.5167` more than its European counterpart at 5000 steps —
+CRR lattice. The same claim can be drawn instead of tabulated: after running the driver,
+
+```bash
+python3 scripts/plot_convergence.py        # needs matplotlib
+```
+
+renders log-log convergence curves with `O(1/N)` and `O(1/√N)` slope guides, a cost-accuracy
+frontier (error against compute time — the honest comparison), and a throughput chart, from the
+CSVs in `results/`, into `results/plots/`. The American put is worth `0.5167` more than its European counterpart at 5000 steps —
 the early-exercise premium, which exists because a deep in-the-money put earns interest on the strike
 if exercised early, and which no closed form captures.
 
@@ -573,7 +581,7 @@ Ordered roughly by dependency, not by ambition.
 - [x] OpenMP-parallel Monte Carlo (path generation is embarrassingly parallel)
 - [ ] SIMD vectorisation of lattice backward induction and payoff evaluation
 - [ ] CUDA acceleration for large path counts
-- [ ] Visualisation of convergence behaviour across engines
+- [x] Visualisation of convergence behaviour across engines
 
 ---
 
@@ -718,6 +726,9 @@ option-converge/
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
+├── scripts/
+│   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
+│                               and throughput plots (matplotlib)
 └── tests/
     └── test_main.cpp           145-check suite run via CTest; exit code = failure count
 ```

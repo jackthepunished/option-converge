@@ -58,18 +58,37 @@ double BinomialTree::earlyExerciseValue(double spotPrice, const OptionParams& pa
 
 // Backward induction over a single rolling vector of node values.
 // Memory is O(steps) rather than the O(steps^2) a full tree would need.
+//
+// The loops are written to auto-vectorize: terminal spots are precomputed
+// once (no pow in any loop), the induction body is a pure elementwise
+// stencil over values[i] and values[i+1], and the American comparison reads
+// node spots as spots[i] * factor, where the per-level scalar factor
+// exploits spot(step, i) = spot(n, i) * u^(n - step) on a recombining tree.
 double BinomialTree::priceIterative(const OptionParams& params,
                                     NodeGreeks* nodeGreeks) const {
     const Lattice lat = buildLattice(params, steps_);
     const size_t n = steps_;
 
+    // Terminal spots by incremental update: moving one down-move to an
+    // up-move multiplies the node spot by u^2. One pow, then O(N) multiplies.
+    std::vector<double> spots(n + 1);
+    const double u2 = lat.u * lat.u;
+    spots[0] = params.spotPrice * std::pow(lat.d, static_cast<double>(n));
+    for (size_t i = 1; i <= n; ++i) {
+        spots[i] = spots[i - 1] * u2;
+    }
+
     // Terminal layer: values[i] is the node reached by i up moves.
     std::vector<double> values(n + 1);
-    for (size_t i = 0; i <= n; ++i) {
-        const double spot = params.spotPrice *
-                            std::pow(lat.u, static_cast<double>(i)) *
-                            std::pow(lat.d, static_cast<double>(n - i));
-        values[i] = payoff(spot, params);
+    const double strike = params.strikePrice;
+    if (params.isCall()) {
+        for (size_t i = 0; i <= n; ++i) {
+            values[i] = std::fmax(spots[i] - strike, 0.0);
+        }
+    } else {
+        for (size_t i = 0; i <= n; ++i) {
+            values[i] = std::fmax(strike - spots[i], 0.0);
+        }
     }
 
     const bool american = params.isAmerican();
@@ -87,18 +106,29 @@ double BinomialTree::priceIterative(const OptionParams& params,
         }
     }
 
-    for (size_t step = n; step-- > 0;) {
-        for (size_t i = 0; i <= step; ++i) {
-            const double continuation =
-                lat.discount * (lat.p * values[i + 1] + (1.0 - lat.p) * values[i]);
+    // Hoisted stencil weights; the induction body is then a two-term
+    // multiply-add per node, which the compiler turns into SIMD.
+    const double wUp = lat.discount * lat.p;
+    const double wDown = lat.discount * (1.0 - lat.p);
+    const double isCallSign = params.isCall() ? 1.0 : -1.0;
 
-            if (american) {
-                const double spot = params.spotPrice *
-                                    std::pow(lat.u, static_cast<double>(i)) *
-                                    std::pow(lat.d, static_cast<double>(step - i));
-                values[i] = std::fmax(continuation, earlyExerciseValue(spot, params));
-            } else {
-                values[i] = continuation;
+    // spot(step, i) = spots[i] * u^(n - step); the factor accumulates one
+    // multiply per level instead of two pows per node.
+    double levelFactor = 1.0;
+
+    for (size_t step = n; step-- > 0;) {
+        levelFactor *= lat.u;
+        if (american) {
+            const double f = levelFactor;
+            for (size_t i = 0; i <= step; ++i) {
+                const double continuation = wUp * values[i + 1] + wDown * values[i];
+                const double exercise =
+                    std::fmax(isCallSign * (spots[i] * f - strike), 0.0);
+                values[i] = std::fmax(continuation, exercise);
+            }
+        } else {
+            for (size_t i = 0; i <= step; ++i) {
+                values[i] = wUp * values[i + 1] + wDown * values[i];
             }
         }
 

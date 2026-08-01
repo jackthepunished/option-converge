@@ -150,6 +150,11 @@ void testBinomialTree() {
     check(tree.price(deepPut).price >= 50.0 - 1e-9,
           "deep ITM American put >= intrinsic");
 
+    // Deep lattice at the README's largest tabulated depth: pins the
+    // vectorized induction against the measured convergence table.
+    BinomialTree deep(5000);
+    checkNear(deep.price(kPut).price, kBsPut, 5e-4, "CRR(5000) matches README table");
+
     // Node Greeks on an American contract: the put's convexity must survive
     // the early-exercise kink.
     const Greeks amGreeks = tree.calculateGreeks(americanPut);

@@ -5,6 +5,7 @@
 #include "options/BarrierOption.h"
 #include "options/BinomialTree.h"
 #include "options/BlackScholes.h"
+#include "options/Calibration.h"
 #include "options/ConvergenceAnalyzer.h"
 #include "options/FiniteDifference.h"
 #include "options/Heston.h"
@@ -189,6 +190,90 @@ void testMonteCarlo() {
     OptionParams american = kPut;
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
+}
+
+void testCalibration() {
+    using namespace Options;
+    BlackScholes bs;
+
+    // Implied vol surface: quotes generated at known, strike-dependent vols
+    // must invert back to exactly those vols.
+    {
+        MarketData market{100.0, 0.05, 0.0, {}};
+        const double strikes[] = {80.0, 100.0, 120.0};
+        for (const double K : strikes) {
+            const double smileVol = 0.20 + 0.05 * std::fabs(K - 100.0) / 100.0;
+            OptionParams p(100.0, K, 0.05, smileVol, 1.0, 0.0, OptionType::CALL,
+                           ExerciseType::EUROPEAN);
+            market.quotes.emplace_back(K, 1.0, bs.price(p).price, OptionType::CALL);
+        }
+        const auto surface = ImpliedVolSurface::build(market);
+        check(surface.size() == 3, "surface has one point per quote");
+        for (const auto& pt : surface) {
+            const double expected = 0.20 + 0.05 * std::fabs(pt.strike - 100.0) / 100.0;
+            checkNear(pt.impliedVol, expected, 1e-6,
+                      "surface recovers quote vol at K=" + std::to_string(pt.strike));
+        }
+    }
+
+    // Heston calibration: synthetic quotes from known parameters, fitted
+    // from a deliberately wrong starting point.
+    {
+        const HestonParams truth(0.04, 0.04, 2.0, 0.5, -0.7);
+        const HestonModel model(truth);
+        MarketData market{100.0, 0.05, 0.0, {}};
+        const double strikes[] = {80.0, 90.0, 100.0, 110.0, 120.0};
+        for (const double K : strikes) {
+            OptionParams p(100.0, K, 0.05, 0.2, 1.0, 0.0, OptionType::CALL,
+                           ExerciseType::EUROPEAN);
+            market.quotes.emplace_back(K, 1.0, model.price(p), OptionType::CALL);
+        }
+        {
+            OptionParams p(100.0, 100.0, 0.05, 0.2, 0.5, 0.0, OptionType::CALL,
+                           ExerciseType::EUROPEAN);
+            market.quotes.emplace_back(100.0, 0.5, model.price(p), OptionType::CALL);
+        }
+
+        HestonCalibrator calibrator(300);
+        const HestonParams start(0.06, 0.06, 1.5, 0.7, -0.4);
+        const auto fit = calibrator.calibrate(market, start);
+
+        // The fit must reproduce the quoted prices...
+        check(fit.objective < 1e-4, "calibration reproduces synthetic quotes");
+        // ...its best objective must never increase (a structural property
+        // of Nelder-Mead this implementation is required to preserve)...
+        bool monotone = true;
+        for (size_t i = 1; i < fit.objectiveHistory.size(); ++i) {
+            if (fit.objectiveHistory[i] > fit.objectiveHistory[i - 1] + 1e-15) {
+                monotone = false;
+                break;
+            }
+        }
+        check(monotone, "calibration objective is non-increasing");
+        check(fit.objectiveHistory.back() < fit.objectiveHistory.front(),
+              "calibration actually improves on the start");
+        // ...and the well-identified parameters must come back. kappa and xi
+        // trade off along a near-flat valley, so only the parameters the
+        // quote set actually pins down are asserted tightly.
+        checkNear(fit.params.v0, 0.04, 0.015, "calibration recovers v0");
+        checkNear(fit.params.rho, -0.7, 0.2, "calibration recovers rho");
+    }
+
+    checkThrows(
+        [] {
+            MarketData empty{100.0, 0.05, 0.0, {}};
+            (void)ImpliedVolSurface::build(empty);
+        },
+        "surface rejects empty quote set");
+    checkThrows(
+        [] {
+            MarketData empty{100.0, 0.05, 0.0, {}};
+            HestonCalibrator calib;
+            (void)calib.calibrate(empty, HestonParams(0.04, 0.04, 2.0, 0.5, -0.5));
+        },
+        "calibrator rejects empty quote set");
+    checkThrows([] { MarketQuote(100.0, 1.0, -5.0, OptionType::CALL); },
+                "negative quote price rejected");
 }
 
 void testHeston() {
@@ -655,6 +740,7 @@ int main() {
     testBinomialTree();
     testMonteCarlo();
     testHeston();
+    testCalibration();
     testLongstaffSchwartz();
     testAsianOptions();
     testBarrierOptions();

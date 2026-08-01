@@ -35,6 +35,11 @@ struct BarrierParams {
         if (!option.isEuropean()) {
             throw std::invalid_argument("Barrier pricing supports European exercise only");
         }
+        if (option.hasDiscreteDividends()) {
+            // The escrowed adjustment changes the process the barrier
+            // monitors; silently applying it would misprice the crossing.
+            throw std::invalid_argument("Barrier pricing does not model discrete dividends");
+        }
     }
 
     [[nodiscard]] constexpr bool isUp() const noexcept {

@@ -69,11 +69,21 @@ double BinomialTree::priceIterative(const OptionParams& params,
     const Lattice lat = buildLattice(params, steps_);
     const size_t n = steps_;
 
+    // Escrowed-dividend model: the tree diffuses the dividend-stripped spot
+    // S' = S - PV(dividends), which keeps the lattice recombining. Exercise
+    // decisions below add back the PV of the dividends still unpaid at that
+    // node's time, since the holder exercises into the cum-dividend stock.
+    const double strippedSpot = params.spotPrice - params.dividendPVAfter(0.0);
+    if (strippedSpot <= 0.0) {
+        throw std::invalid_argument(
+            "Present value of discrete dividends exceeds the spot price");
+    }
+
     // Terminal spots by incremental update: moving one down-move to an
     // up-move multiplies the node spot by u^2. One pow, then O(N) multiplies.
     std::vector<double> spots(n + 1);
     const double u2 = lat.u * lat.u;
-    spots[0] = params.spotPrice * std::pow(lat.d, static_cast<double>(n));
+    spots[0] = strippedSpot * std::pow(lat.d, static_cast<double>(n));
     for (size_t i = 1; i <= n; ++i) {
         spots[i] = spots[i - 1] * u2;
     }
@@ -120,10 +130,16 @@ double BinomialTree::priceIterative(const OptionParams& params,
         levelFactor *= lat.u;
         if (american) {
             const double f = levelFactor;
+            // Cum-dividend add-back at this level's time; zero when the
+            // contract carries no discrete dividends.
+            const double addBack =
+                params.hasDiscreteDividends()
+                    ? params.dividendPVAfter(static_cast<double>(step) * lat.dt)
+                    : 0.0;
             for (size_t i = 0; i <= step; ++i) {
                 const double continuation = wUp * values[i + 1] + wDown * values[i];
                 const double exercise =
-                    std::fmax(isCallSign * (spots[i] * f - strike), 0.0);
+                    std::fmax(isCallSign * (spots[i] * f + addBack - strike), 0.0);
                 values[i] = std::fmax(continuation, exercise);
             }
         } else {
@@ -160,6 +176,13 @@ double BinomialTree::priceRecursive(const OptionParams& params) const {
     const Lattice lat = buildLattice(params, steps_);
     const size_t n = steps_;
 
+    // Same escrowed-dividend treatment as the iterative path.
+    const double strippedSpot = params.spotPrice - params.dividendPVAfter(0.0);
+    if (strippedSpot <= 0.0) {
+        throw std::invalid_argument(
+            "Present value of discrete dividends exceeds the spot price");
+    }
+
     // Triangular memo table indexed by (step, upMoves).
     const size_t size = (n + 1) * (n + 2) / 2;
     std::vector<double> memo(size);
@@ -170,8 +193,13 @@ double BinomialTree::priceRecursive(const OptionParams& params) const {
     };
 
     const auto spotAt = [&](size_t step, size_t up) noexcept {
-        return params.spotPrice * std::pow(lat.u, static_cast<double>(up)) *
+        return strippedSpot * std::pow(lat.u, static_cast<double>(up)) *
                std::pow(lat.d, static_cast<double>(step - up));
+    };
+
+    const auto cumDividendSpotAt = [&](size_t step, size_t up) {
+        return spotAt(step, up) +
+               params.dividendPVAfter(static_cast<double>(step) * lat.dt);
     };
 
     const bool american = params.isAmerican();
@@ -220,7 +248,8 @@ double BinomialTree::priceRecursive(const OptionParams& params) const {
             lat.discount * (lat.p * memo[upIdx] + (1.0 - lat.p) * memo[downIdx]);
 
         memo[idx] = american
-                        ? std::fmax(continuation, earlyExerciseValue(spotAt(frame.step, frame.up), params))
+                        ? std::fmax(continuation,
+                                    earlyExerciseValue(cumDividendSpotAt(frame.step, frame.up), params))
                         : continuation;
         filled[idx] = 1;
     }

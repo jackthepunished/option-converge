@@ -15,6 +15,13 @@ PricingResult BlackScholes::price(const OptionParams& params) {
             "Black-Scholes only prices European options. Use Binomial Tree for American options.");
     }
 
+    // Escrowed-dividend model: a European claim on a stock paying known cash
+    // dividends is the same claim on a stock worth S minus their present
+    // value, with no dividends.
+    if (params.hasDiscreteDividends()) {
+        return price(params.escrowed());
+    }
+
     PricingResult result;
 
     // Pre-calculate all values once for both price and Greeks
@@ -72,6 +79,12 @@ PricingResult BlackScholes::price(const OptionParams& params) {
 
 // Calculate Greeks analytically (overrides base class finite difference method)
 Greeks BlackScholes::calculateGreeks(const OptionParams& params) {
+    // dS'/dS = 1 under the escrowed adjustment, so the Greeks of the
+    // stripped contract are the Greeks of the dividend-paying one.
+    if (params.hasDiscreteDividends()) {
+        return calculateGreeks(params.escrowed());
+    }
+
     Greeks greeks;
 
     // Pre-calculate common values once

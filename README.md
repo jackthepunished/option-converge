@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 151-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 172-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -48,7 +48,7 @@ The table below reflects what is compiled into the library today, not what is pl
 | `PricingEngine` (interface) | Yes | Yes | Yes | Abstract base; finite-difference Greeks |
 | `BlackScholes` | Yes | Yes | Yes | Analytic price and Greeks, European only |
 | `BinomialTree` | Yes | Yes | Yes | CRR lattice, European and American |
-| `Option` (types, params) | Yes | Yes | Yes | Validated parameter struct |
+| `Option` (types, params) | Yes | Yes | Yes | Validated parameter struct; discrete cash dividends |
 | `MonteCarlo` | Yes | Yes | Yes | Euler/Milstein schemes; four variance-reduction modes |
 | `FiniteDifference` | Yes | Yes | Yes | Explicit/implicit/Crank-Nicolson; European and American |
 | Barrier options | Yes | Yes | Yes | Reiner-Rubinstein closed forms + Brownian-bridge MC |
@@ -59,7 +59,7 @@ The table below reflects what is compiled into the library today, not what is pl
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 151 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 172 checks under CTest, no framework dependency |
 
 ---
 
@@ -76,6 +76,9 @@ The table below reflects what is compiled into the library today, not what is pl
   instead of two `pow` calls per node — 33× faster American pricing at 5000 steps, measured
 - Arbitrage checks on lattice construction (rejects step counts that produce `p ∉ [0, 1]`)
 - Validated option parameters that fail fast on non-positive spot, strike, or maturity
+- Discrete cash dividends under the escrowed model: European engines price the
+  dividend-stripped spot, the lattice restores unpaid dividends at each node for American
+  exercise, and pricers where the shortcut is unsound refuse rather than approximate
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
@@ -103,7 +106,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 151-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 172-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -603,8 +606,14 @@ that has none.
    differences, noise and all.
 2. **`-ffast-math` is enabled by default**, with the caveats described under
    [Performance](#performance).
-3. **Discrete dividends are modelled as an enum value only** (`DividendType::DISCRETE`); no engine
-   consumes it. Only the continuous dividend yield `q` is honoured.
+3. **Discrete dividends use the escrowed model** (fixed; the vestigial `DividendType` enum is
+   gone). Cash dividends registered via `OptionParams::addDividend` are priced by diffusing the
+   dividend-stripped spot; the lattice adds the PV of unpaid dividends back at each node for
+   American exercise. The escrowed model is standard but not exact — it understates the vol of
+   the cum-dividend price — and pricers where the shortcut is unsound refuse rather than
+   approximate: finite differences for American contracts, and the path-dependent pricers
+   (barrier, Asian, Longstaff-Schwartz, Heston), whose payoffs sample the path the adjustment
+   distorts.
 4. **The plain `MonteCarlo` engine is European-only** and throws on American options, as does
    `BlackScholes`. American exercise under simulation is handled by the dedicated
    `LongstaffSchwartz` pricer, which carries the usual caveats of the method: the regression
@@ -736,7 +745,7 @@ option-converge/
 │   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
 │                               and throughput plots (matplotlib)
 └── tests/
-    └── test_main.cpp           151-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           172-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

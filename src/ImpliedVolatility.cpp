@@ -59,6 +59,11 @@ ImpliedVolatility::Result ImpliedVolatility::solve(double marketPrice,
         throw std::invalid_argument(
             "Implied volatility is Black-Scholes based and requires a European option.");
     }
+    if (params.hasDiscreteDividends()) {
+        throw std::invalid_argument(
+            "Implied volatility does not model discrete dividends; strip them from the "
+            "quote and solve on the escrowed spot instead.");
+    }
 
     // No volatility can push the price outside the no-arbitrage band
     // (discounted intrinsic, discounted spot-or-strike); reject rather than

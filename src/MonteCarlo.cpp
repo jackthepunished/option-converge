@@ -264,6 +264,11 @@ PricingResult MonteCarlo::price(const OptionParams& params) {
             "Use Binomial Tree for American options.");
     }
 
+    // Escrowed-dividend model: simulate the dividend-stripped spot.
+    if (params.hasDiscreteDividends()) {
+        return price(params.escrowed());
+    }
+
     const auto start = std::chrono::high_resolution_clock::now();
 
     PricingResult result;

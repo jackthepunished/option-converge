@@ -30,6 +30,11 @@ struct AsianParams {
         if (!option.isEuropean()) {
             throw std::invalid_argument("Asian pricing supports European exercise only");
         }
+        if (option.hasDiscreteDividends()) {
+            // The average samples the path, not just the terminal value, so
+            // the escrowed shortcut does not apply.
+            throw std::invalid_argument("Asian pricing does not model discrete dividends");
+        }
     }
 };
 

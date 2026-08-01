@@ -1,0 +1,13 @@
+# Normalize all text files to LF in the repository and working tree.
+# The project is developed across Windows and WSL on a shared mount;
+# without this, checkouts and editor saves produce whole-file CRLF churn.
+* text=auto
+
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.txt   text eol=lf
+*.csv   text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf

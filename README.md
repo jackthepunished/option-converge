@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 73-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 90-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -51,10 +51,11 @@ The table below reflects what is compiled into the library today, not what is pl
 | `Option` (types, params) | Yes | Yes | Yes | Validated parameter struct |
 | `MonteCarlo` | Yes | Yes | Yes | Euler/Milstein schemes; four variance-reduction modes |
 | `FiniteDifference` | Yes | Yes | Yes | Explicit/implicit/Crank-Nicolson; European and American |
+| Barrier options | Yes | Yes | Yes | Reiner-Rubinstein closed forms + Brownian-bridge MC |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 73 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 90 checks under CTest, no framework dependency |
 
 ---
 
@@ -71,13 +72,16 @@ The table below reflects what is compiled into the library today, not what is pl
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
+- Barrier options (all four knock-in/knock-out variants): continuously monitored
+  Reiner-Rubinstein closed forms, cross-validated against a Monte Carlo pricer whose
+  Brownian-bridge crossing correction lets coarse paths price the continuous contract
 - Finite difference PDE engine: explicit, implicit, and Crank-Nicolson as one θ-scheme on a
   log-spot grid, Thomas-algorithm tridiagonal solves, American exercise via projection, and
   automatic time-axis refinement to keep the explicit scheme inside its stability bound
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 73-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 90-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -531,7 +535,7 @@ Ordered roughly by dependency, not by ambition.
 - [x] Finite difference methods (explicit, implicit, Crank-Nicolson)
 
 **Instruments**
-- [ ] Barrier options (knock-in, knock-out)
+- [x] Barrier options (knock-in, knock-out)
 - [ ] Asian options (arithmetic and geometric averaging)
 - [ ] Longstaff-Schwartz for American exercise under Monte Carlo
 
@@ -661,6 +665,7 @@ option-converge/
 │       ├── BinomialTree.h          CRR lattice engine
 │       ├── MonteCarlo.h            Simulation engine
 │       ├── FiniteDifference.h      PDE engine (theta-scheme)
+│       ├── BarrierOption.h         Barrier types, analytic + MC pricers
 │       ├── ImpliedVolatility.h     Implied volatility solver
 │       ├── ConvergenceAnalyzer.h   Convergence tooling
 │       └── PerformanceBenchmark.h  Benchmark and Timer
@@ -671,12 +676,13 @@ option-converge/
 │   ├── BinomialTree.cpp        Backward induction, iterative and memoised recursive
 │   ├── MonteCarlo.cpp          Path simulation, variance reduction, CRN Greeks
 │   ├── FiniteDifference.cpp    Theta-scheme PDE solver, Thomas algorithm
+│   ├── BarrierOption.cpp       Reiner-Rubinstein formulas, bridge-corrected MC
 │   ├── ImpliedVolatility.cpp   Newton-Raphson / Brent inversion of Black-Scholes
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
 └── tests/
-    └── test_main.cpp           73-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           90-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

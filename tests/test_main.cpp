@@ -1,6 +1,7 @@
 // Test suite for the options pricing library. Hand-rolled assertions keep the
 // project dependency-free; the process exit code is the number of failures.
 
+#include "options/BarrierOption.h"
 #include "options/BinomialTree.h"
 #include "options/BlackScholes.h"
 #include "options/ConvergenceAnalyzer.h"
@@ -187,6 +188,101 @@ void testMonteCarlo() {
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
 }
 
+void testBarrierOptions() {
+    using namespace Options;
+    BlackScholes bs;
+
+    // Exact structural identities. An up-and-in call with the barrier at or
+    // below the strike IS the vanilla call: any path ending in the money has
+    // necessarily crossed the barrier. Its knock-out complement is worthless.
+    {
+        OptionParams call110 = kCall;
+        call110.strikePrice = 110.0;
+        const double vanilla = bs.price(call110).price;
+        BarrierParams upIn(call110, BarrierType::UP_AND_IN, 110.0);
+        BarrierParams upOut(call110, BarrierType::UP_AND_OUT, 110.0);
+        checkNear(AnalyticBarrier::price(upIn), vanilla, 1e-10,
+                  "up-in call with B<=K equals vanilla");
+        checkNear(AnalyticBarrier::price(upOut), 0.0, 1e-10,
+                  "up-out call with B<=K is worthless");
+    }
+    {
+        OptionParams put85 = kPut;
+        put85.strikePrice = 85.0;
+        const double vanilla = bs.price(put85).price;
+        BarrierParams downIn(put85, BarrierType::DOWN_AND_IN, 90.0);
+        BarrierParams downOut(put85, BarrierType::DOWN_AND_OUT, 90.0);
+        checkNear(AnalyticBarrier::price(downIn), vanilla, 1e-10,
+                  "down-in put with B>=K equals vanilla");
+        checkNear(AnalyticBarrier::price(downOut), 0.0, 1e-10,
+                  "down-out put with B>=K is worthless");
+    }
+
+    // A barrier the process cannot plausibly reach changes nothing.
+    BarrierParams farOut(kCall, BarrierType::DOWN_AND_OUT, 1.0);
+    BarrierParams farIn(kCall, BarrierType::DOWN_AND_IN, 1.0);
+    checkNear(AnalyticBarrier::price(farOut), kBsCall, 1e-6,
+              "far barrier knock-out equals vanilla");
+    checkNear(AnalyticBarrier::price(farIn), 0.0, 1e-6,
+              "far barrier knock-in is worthless");
+
+    // Tightening a knock-out barrier can only destroy value.
+    const double out80 =
+        AnalyticBarrier::price(BarrierParams(kCall, BarrierType::DOWN_AND_OUT, 80.0));
+    const double out95 =
+        AnalyticBarrier::price(BarrierParams(kCall, BarrierType::DOWN_AND_OUT, 95.0));
+    check(out95 < out80 && out80 < kBsCall + 1e-9,
+          "down-out call value decreases as barrier rises");
+
+    // Monte Carlo with the Brownian-bridge correction must agree with the
+    // continuously monitored closed form — two unrelated methods, one price.
+    BarrierMonteCarlo mc(100000, 64);
+    {
+        BarrierParams downOut(kCall, BarrierType::DOWN_AND_OUT, 90.0);
+        const auto est = mc.price(downOut);
+        check(est.standardError > 0.0, "barrier MC reports standard error");
+        checkNear(est.price, AnalyticBarrier::price(downOut),
+                  3.0 * est.standardError + 0.01, "MC down-out call vs analytic");
+    }
+    {
+        BarrierParams upOut(kCall, BarrierType::UP_AND_OUT, 120.0);
+        const auto est = mc.price(upOut);
+        checkNear(est.price, AnalyticBarrier::price(upOut),
+                  3.0 * est.standardError + 0.01, "MC up-out call vs analytic");
+    }
+    {
+        BarrierParams downIn(kPut, BarrierType::DOWN_AND_IN, 90.0);
+        const auto est = mc.price(downIn);
+        checkNear(est.price, AnalyticBarrier::price(downIn),
+                  3.0 * est.standardError + 0.01, "MC down-in put vs analytic");
+    }
+
+    // In-out parity holds path by path under the same seed, so the sum is
+    // exactly the plain MC vanilla estimate and must sit near Black-Scholes.
+    const auto mcIn = mc.price(BarrierParams(kCall, BarrierType::DOWN_AND_IN, 90.0));
+    const auto mcOut = mc.price(BarrierParams(kCall, BarrierType::DOWN_AND_OUT, 90.0));
+    checkNear(mcIn.price + mcOut.price, kBsCall, 0.15, "MC in + out = vanilla");
+
+    // Already-breached contracts degenerate immediately.
+    BarrierParams breachedOut(kCall, BarrierType::DOWN_AND_OUT, 100.0);
+    BarrierParams breachedIn(kCall, BarrierType::UP_AND_IN, 95.0);
+    checkNear(AnalyticBarrier::price(breachedOut), 0.0, 1e-12,
+              "breached knock-out is worthless");
+    checkNear(AnalyticBarrier::price(breachedIn), kBsCall, 1e-5,
+              "breached knock-in is the vanilla option");
+    checkNear(mc.price(breachedOut).price, 0.0, 1e-12, "MC breached knock-out is zero");
+
+    checkThrows([] { BarrierParams(kCall, BarrierType::UP_AND_OUT, -5.0); },
+                "non-positive barrier rejected");
+    checkThrows(
+        [] {
+            OptionParams american = kCall;
+            american.exerciseType = ExerciseType::AMERICAN;
+            BarrierParams(american, BarrierType::UP_AND_OUT, 120.0);
+        },
+        "American barrier rejected");
+}
+
 void testFiniteDifference() {
     using namespace Options;
 
@@ -350,6 +446,7 @@ int main() {
     testBlackScholes();
     testBinomialTree();
     testMonteCarlo();
+    testBarrierOptions();
     testFiniteDifference();
     testImpliedVolatility();
     testConvergenceAnalyzer();

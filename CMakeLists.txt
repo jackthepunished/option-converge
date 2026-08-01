@@ -63,6 +63,7 @@ set(SOURCES
     src/BinomialTree.cpp
     src/FiniteDifference.cpp
     src/ImpliedVolatility.cpp
+    src/LongstaffSchwartz.cpp
     src/MonteCarlo.cpp
     src/ConvergenceAnalyzer.cpp
     src/PerformanceBenchmark.cpp

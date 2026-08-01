@@ -8,6 +8,7 @@
 #include "options/ConvergenceAnalyzer.h"
 #include "options/FiniteDifference.h"
 #include "options/ImpliedVolatility.h"
+#include "options/LongstaffSchwartz.h"
 #include "options/MonteCarlo.h"
 #include "options/PerformanceBenchmark.h"
 
@@ -187,6 +188,61 @@ void testMonteCarlo() {
     OptionParams american = kPut;
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
+}
+
+void testLongstaffSchwartz() {
+    using namespace Options;
+    BinomialTree tree(2000);
+    LongstaffSchwartz lsmc(50000, 50);
+
+    OptionParams americanPut = kPut;
+    americanPut.exerciseType = ExerciseType::AMERICAN;
+    OptionParams americanCall = kCall;
+    americanCall.exerciseType = ExerciseType::AMERICAN;
+
+    // The regression estimate must land on the lattice's American put value:
+    // two unrelated treatments of early exercise, one price. LSMC carries a
+    // small low bias from the finite basis, hence the additive allowance.
+    const auto putEst = lsmc.price(americanPut);
+    const double treePut = tree.price(americanPut).price;
+    check(putEst.standardError > 0.0, "LSMC reports standard error");
+    checkNear(putEst.price, treePut, 3.0 * putEst.standardError + 0.05,
+              "LSMC American put matches lattice");
+
+    // The early-exercise premium over the European put must survive.
+    check(putEst.price > kBsPut + 0.3,
+          "LSMC American put carries early-exercise premium");
+
+    // Without dividends, early exercise of a call is never optimal, so the
+    // LSMC American call must reproduce the European Black-Scholes value.
+    const auto callEst = lsmc.price(americanCall);
+    checkNear(callEst.price, kBsCall, 3.0 * callEst.standardError + 0.05,
+              "LSMC American call equals European (q=0)");
+
+    // With a heavy dividend yield early exercise of the call has value, and
+    // LSMC must agree with the lattice about how much.
+    OptionParams divCall(100.0, 100.0, 0.05, 0.20, 1.0, 0.08, OptionType::CALL,
+                         ExerciseType::AMERICAN);
+    const auto divEst = lsmc.price(divCall);
+    checkNear(divEst.price, tree.price(divCall).price,
+              3.0 * divEst.standardError + 0.05,
+              "LSMC dividend-paying American call matches lattice");
+
+    // Deep in the money, immediate exercise dominates and the intrinsic
+    // floor at t=0 must hold exactly.
+    OptionParams deepPut(50.0, 100.0, 0.05, 0.20, 1.0, 0.0, OptionType::PUT,
+                         ExerciseType::AMERICAN);
+    check(lsmc.price(deepPut).price >= 50.0 - 1e-12,
+          "LSMC deep ITM American put >= intrinsic");
+
+    // Same seed, same estimate.
+    LongstaffSchwartz a(20000, 25), b(20000, 25);
+    checkNear(a.price(americanPut).price, b.price(americanPut).price, 1e-12,
+              "same seed gives identical LSMC price");
+
+    checkThrows([&] { (void)lsmc.price(kPut); }, "LSMC rejects European options");
+    checkThrows([] { LongstaffSchwartz(1, 50); }, "degenerate path count rejected");
+    checkThrows([] { LongstaffSchwartz(1000, 0); }, "zero exercise dates rejected");
 }
 
 void testAsianOptions() {
@@ -527,6 +583,7 @@ int main() {
     testBlackScholes();
     testBinomialTree();
     testMonteCarlo();
+    testLongstaffSchwartz();
     testAsianOptions();
     testBarrierOptions();
     testFiniteDifference();

@@ -76,6 +76,10 @@ LongstaffSchwartz::Result LongstaffSchwartz::price(const OptionParams& params) c
         throw std::invalid_argument(
             "Longstaff-Schwartz prices American exercise; use MonteCarlo for European options.");
     }
+    if (params.hasDiscreteDividends()) {
+        throw std::invalid_argument(
+            "Longstaff-Schwartz does not model discrete dividends; use BinomialTree.");
+    }
 
     const size_t N = numPaths_;
     const size_t M = numDates_;

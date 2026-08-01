@@ -1,8 +1,10 @@
 #ifndef OPTION_H
 #define OPTION_H
 
+#include <cmath>
 #include <string>
 #include <stdexcept>
+#include <vector>
 
 namespace Options {
 
@@ -18,11 +20,11 @@ enum class ExerciseType {
     AMERICAN
 };
 
-// Enumeration for dividend types
-enum class DividendType {
-    NONE,
-    CONTINUOUS,
-    DISCRETE
+// A discrete cash dividend: a known amount paid at a known future time.
+// Added to a contract via OptionParams::addDividend, which validates it.
+struct Dividend {
+    double time;    // Payment time in years from now, in (0, T)
+    double amount;  // Cash amount per share, non-negative
 };
 
 // Structure to hold option parameters
@@ -35,6 +37,7 @@ struct OptionParams {
     double dividendYield;       // Continuous dividend yield (q)
     OptionType optionType;      // Call or Put
     ExerciseType exerciseType;  // European or American
+    std::vector<Dividend> discreteDividends;  // Cash dividends; empty by default
 
     // Constructor with defaults
     OptionParams(double S = 100.0, double K = 100.0, double r = 0.05,
@@ -53,6 +56,45 @@ struct OptionParams {
         if (strikePrice <= 0) throw std::invalid_argument("Strike price must be positive");
         if (volatility < 0) throw std::invalid_argument("Volatility must be non-negative");
         if (timeToMaturity <= 0) throw std::invalid_argument("Time to maturity must be positive");
+    }
+
+    // Register a discrete cash dividend. Validated here so that engines can
+    // rely on every stored dividend being payable strictly inside (0, T).
+    void addDividend(double time, double amount) {
+        if (time <= 0.0 || time >= timeToMaturity) {
+            throw std::invalid_argument("Dividend time must lie strictly inside (0, maturity)");
+        }
+        if (amount < 0.0) {
+            throw std::invalid_argument("Dividend amount must be non-negative");
+        }
+        discreteDividends.push_back({time, amount});
+    }
+
+    [[nodiscard]] bool hasDiscreteDividends() const noexcept {
+        return !discreteDividends.empty();
+    }
+
+    // Present value, discounted at the risk-free rate, of all dividends paid
+    // after valuation time t (t = 0 gives the full escrowed adjustment).
+    [[nodiscard]] double dividendPVAfter(double t) const noexcept {
+        double pv = 0.0;
+        for (const Dividend& div : discreteDividends) {
+            if (div.time > t) {
+                pv += div.amount * std::exp(-riskFreeRate * (div.time - t));
+            }
+        }
+        return pv;
+    }
+
+    // The same contract with the spot reduced by the dividends' present value
+    // and the dividend list cleared: the escrowed-dividend transformation
+    // European engines price on directly.
+    [[nodiscard]] OptionParams escrowed() const {
+        OptionParams stripped = *this;
+        stripped.spotPrice = spotPrice - dividendPVAfter(0.0);
+        stripped.discreteDividends.clear();
+        stripped.validate();  // A dividend PV >= spot leaves nothing to price
+        return stripped;
     }
 
     // Helper methods

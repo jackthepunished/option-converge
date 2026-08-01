@@ -32,6 +32,18 @@ std::string FiniteDifference::getName() const {
 }
 
 PricingResult FiniteDifference::price(const OptionParams& params) {
+    if (params.hasDiscreteDividends()) {
+        // European contracts take the escrowed-dividend transformation; the
+        // American grid would need a time-dependent exercise payoff, which
+        // the lattice already provides - refuse rather than approximate.
+        if (params.isAmerican()) {
+            throw std::invalid_argument(
+                "Finite difference does not price American options with discrete "
+                "dividends; use BinomialTree.");
+        }
+        return price(params.escrowed());
+    }
+
     const auto start = std::chrono::high_resolution_clock::now();
 
     PricingResult result;

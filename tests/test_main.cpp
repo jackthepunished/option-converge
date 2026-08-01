@@ -120,6 +120,103 @@ void testBlackScholes() {
                 "BS rejects American options");
 }
 
+void testDiscreteDividends() {
+    using namespace Options;
+    BlackScholes bs;
+
+    // An empty dividend list must change nothing.
+    OptionParams noDivs = kCall;
+    checkNear(bs.price(noDivs).price, kBsCall, 1e-5, "empty dividend list is a no-op");
+
+    // The escrowed identity, pinned externally: a call on a dividend-paying
+    // stock equals a call on a stock worth S minus the dividend's PV.
+    OptionParams divCall = kCall;
+    divCall.addDividend(0.5, 3.0);
+    const double pv = 3.0 * std::exp(-0.05 * 0.5);
+    OptionParams reduced(100.0 - pv, 100.0, 0.05, 0.20, 1.0, 0.0, OptionType::CALL,
+                         ExerciseType::EUROPEAN);
+    checkNear(bs.price(divCall).price, bs.price(reduced).price, 1e-12,
+              "escrowed identity holds exactly");
+
+    // Dividends hurt calls and help puts; more dividend, bigger effect.
+    OptionParams divPut = kPut;
+    divPut.addDividend(0.5, 3.0);
+    check(bs.price(divCall).price < kBsCall, "dividend lowers the call");
+    check(bs.price(divPut).price > kBsPut, "dividend raises the put");
+    OptionParams bigDivCall = kCall;
+    bigDivCall.addDividend(0.5, 6.0);
+    check(bs.price(bigDivCall).price < bs.price(divCall).price,
+          "larger dividend lowers the call further");
+
+    // Put-call parity with the escrowed spot.
+    checkNear(bs.price(divCall).price - bs.price(divPut).price,
+              (100.0 - pv) - 100.0 * std::exp(-0.05), 1e-9,
+              "parity holds on the escrowed spot");
+
+    // All European engines must agree on the dividend-paying contract.
+    const double bsDivCall = bs.price(divCall).price;
+    BinomialTree tree(1000);
+    checkNear(tree.price(divCall).price, bsDivCall, 0.01,
+              "lattice agrees with BS on dividend call");
+    FiniteDifference cn(200, 200, FDScheme::CRANK_NICOLSON);
+    checkNear(cn.price(divCall).price, bsDivCall, 0.01,
+              "FD agrees with BS on dividend call");
+    MonteCarlo mc(50000);
+    const PricingResult mcDiv = mc.price(divCall);
+    checkNear(mcDiv.price, bsDivCall, 3.0 * mcDiv.standardError,
+              "MC agrees with BS on dividend call");
+
+    // The point of the exercise: a large discrete dividend makes early
+    // exercise of an American call worth something, which no continuous
+    // yield of zero can produce. The lattice must find that premium.
+    OptionParams amDivCall = divCall;
+    amDivCall.exerciseType = ExerciseType::AMERICAN;
+    const double amCall = tree.price(amDivCall).price;
+    check(amCall > bsDivCall + 1e-3,
+          "American call gains early-exercise premium from the dividend");
+
+    // American put premium survives dividends too.
+    OptionParams amDivPut = divPut;
+    amDivPut.exerciseType = ExerciseType::AMERICAN;
+    check(tree.price(amDivPut).price > bs.price(divPut).price,
+          "American put premium survives dividends");
+
+    // Validation and honest refusals.
+    checkThrows([] { OptionParams p = kCall; p.addDividend(-0.1, 1.0); },
+                "dividend before valuation rejected");
+    checkThrows([] { OptionParams p = kCall; p.addDividend(1.5, 1.0); },
+                "dividend after expiry rejected");
+    checkThrows([] { OptionParams p = kCall; p.addDividend(0.5, -1.0); },
+                "negative dividend rejected");
+    checkThrows(
+        [&] {
+            OptionParams huge = kCall;
+            huge.addDividend(0.5, 200.0);
+            (void)bs.price(huge);
+        },
+        "dividend PV exceeding spot rejected");
+    checkThrows(
+        [&] {
+            OptionParams p = amDivCall;
+            (void)FiniteDifference(100, 100).price(p);
+        },
+        "FD refuses American with discrete dividends");
+    checkThrows([&] { (void)LongstaffSchwartz(1000, 10).price(amDivCall); },
+                "LSMC refuses discrete dividends");
+    checkThrows([&] { BarrierParams(divCall, BarrierType::UP_AND_OUT, 120.0); },
+                "barrier refuses discrete dividends");
+    checkThrows([&] { AsianParams(divCall, AveragingType::GEOMETRIC, 12); },
+                "Asian refuses discrete dividends");
+    checkThrows(
+        [&] {
+            HestonParams hp(0.04, 0.04, 2.0, 0.5, -0.5);
+            (void)HestonModel(hp).price(divCall);
+        },
+        "Heston refuses discrete dividends");
+    checkThrows([&] { (void)ImpliedVolatility().solve(10.0, divCall); },
+                "implied vol refuses discrete dividends");
+}
+
 void testEngineCopySemantics() {
     using namespace Options;
 
@@ -136,9 +233,12 @@ void testEngineCopySemantics() {
     checkNear(treeCopy.price(kPut).price, tree.price(kPut).price, 0.0,
               "copied lattice prices identically");
 
+    // Copies reuse identical draws, but the OpenMP reduction may combine
+    // partial sums in a different order run to run, so zero tolerance is
+    // wrong for the parallel engine (unlike the deterministic ones above).
     MonteCarlo mc(10000);
     MonteCarlo mcCopy(mc);
-    checkNear(mcCopy.price(kCall).price, mc.price(kCall).price, 0.0,
+    checkNear(mcCopy.price(kCall).price, mc.price(kCall).price, 1e-9,
               "copied Monte Carlo prices identically");
 
     FiniteDifference fd(100, 100);
@@ -800,6 +900,7 @@ int main() {
     testBlackScholes();
     testEngineCopySemantics();
     testBinomialTree();
+    testDiscreteDividends();
     testMonteCarlo();
     testHeston();
     testCalibration();

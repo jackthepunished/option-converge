@@ -84,6 +84,9 @@ double HestonModel::price(const OptionParams& option) const {
     if (!option.isEuropean()) {
         throw std::invalid_argument("Heston semi-analytic pricing is European only.");
     }
+    if (option.hasDiscreteDividends()) {
+        throw std::invalid_argument("Heston pricing does not model discrete dividends.");
+    }
 
     const double discS =
         option.spotPrice * std::exp(-option.dividendYield * option.timeToMaturity);
@@ -109,6 +112,9 @@ HestonMonteCarlo::HestonMonteCarlo(const HestonParams& params, size_t numPaths,
 HestonMonteCarlo::Result HestonMonteCarlo::price(const OptionParams& option) const {
     if (!option.isEuropean()) {
         throw std::invalid_argument("Heston Monte Carlo prices European options only.");
+    }
+    if (option.hasDiscreteDividends()) {
+        throw std::invalid_argument("Heston Monte Carlo does not model discrete dividends.");
     }
 
     const double dt = option.timeToMaturity / static_cast<double>(numSteps_);

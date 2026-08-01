@@ -1,6 +1,7 @@
 // Test suite for the options pricing library. Hand-rolled assertions keep the
 // project dependency-free; the process exit code is the number of failures.
 
+#include "options/AsianOption.h"
 #include "options/BarrierOption.h"
 #include "options/BinomialTree.h"
 #include "options/BlackScholes.h"
@@ -186,6 +187,86 @@ void testMonteCarlo() {
     OptionParams american = kPut;
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
+}
+
+void testAsianOptions() {
+    using namespace Options;
+    BlackScholes bs;
+
+    // With a single fixing the average IS the terminal spot, so the discrete
+    // geometric closed form must reproduce Black-Scholes exactly.
+    AsianParams oneFixCall(kCall, AveragingType::GEOMETRIC, 1);
+    AsianParams oneFixPut(kPut, AveragingType::GEOMETRIC, 1);
+    checkNear(AnalyticGeometricAsian::price(oneFixCall), kBsCall, 1e-6,
+              "geometric Asian with one fixing is the vanilla call");
+    checkNear(AnalyticGeometricAsian::price(oneFixPut), kBsPut, 1e-6,
+              "geometric Asian with one fixing is the vanilla put");
+
+    // Averaging damps volatility, so the Asian call is worth less than the
+    // vanilla, and its value falls as more fixings enter the average.
+    AsianParams geo12(kCall, AveragingType::GEOMETRIC, 12);
+    AsianParams geo50(kCall, AveragingType::GEOMETRIC, 50);
+    const double geo12Price = AnalyticGeometricAsian::price(geo12);
+    const double geo50Price = AnalyticGeometricAsian::price(geo50);
+    check(geo12Price < kBsCall, "geometric Asian call below vanilla call");
+    check(geo50Price < geo12Price, "more fixings, lower Asian call value");
+
+    // Put-call parity in the geometric measure: C - P = disc * (E[G] - K).
+    AsianParams geo12Put(kPut, AveragingType::GEOMETRIC, 12);
+    const double geoPutPrice = AnalyticGeometricAsian::price(geo12Put);
+    {
+        // Recompute E[G] from the same moments the formula uses.
+        const double nd = 12.0;
+        const double m = std::log(100.0) + (0.05 - 0.5 * 0.04) * 1.0 * (nd + 1.0) / (2.0 * nd);
+        const double v2 = 0.04 * 1.0 * (nd + 1.0) * (2.0 * nd + 1.0) / (6.0 * nd * nd);
+        const double parity = std::exp(-0.05) * (std::exp(m + 0.5 * v2) - 100.0);
+        checkNear(geo12Price - geoPutPrice, parity, 1e-10, "geometric Asian put-call parity");
+    }
+
+    // Monte Carlo geometric pricing must agree with its own closed form.
+    AsianMonteCarlo mc(100000);
+    {
+        const auto est = mc.price(geo12);
+        check(est.standardError > 0.0, "Asian MC reports standard error");
+        checkNear(est.price, geo12Price, 3.0 * est.standardError,
+                  "MC geometric Asian within 3 SE of closed form");
+    }
+
+    // The arithmetic mean dominates the geometric (AM-GM), so the arithmetic
+    // call must be worth at least the geometric call.
+    AsianParams arith12(kCall, AveragingType::ARITHMETIC, 12);
+    const auto arithEst = mc.price(arith12);
+    check(arithEst.price > geo12Price,
+          "arithmetic Asian call above geometric (AM-GM)");
+    check(arithEst.price < kBsCall, "arithmetic Asian call below vanilla call");
+
+    // The geometric control variate has to earn its keep.
+    const auto plain = mc.price(arith12, false);
+    check(arithEst.standardError < 0.2 * plain.standardError,
+          "geometric control variate slashes arithmetic SE");
+    checkNear(arithEst.price, plain.price, 3.0 * plain.standardError,
+              "CV and plain estimates agree");
+
+    // Same seed, same estimate.
+    AsianMonteCarlo mcA(20000), mcB(20000);
+    checkNear(mcA.price(arith12).price, mcB.price(arith12).price, 1e-12,
+              "same seed gives identical Asian MC price");
+
+    checkThrows([] { AsianParams(kCall, AveragingType::ARITHMETIC, 0); },
+                "zero fixings rejected");
+    checkThrows(
+        [] {
+            OptionParams american = kCall;
+            american.exerciseType = ExerciseType::AMERICAN;
+            AsianParams(american, AveragingType::GEOMETRIC, 12);
+        },
+        "American Asian rejected");
+    checkThrows(
+        [] {
+            AsianParams arith(kCall, AveragingType::ARITHMETIC, 12);
+            (void)AnalyticGeometricAsian::price(arith);
+        },
+        "closed form refuses arithmetic averaging");
 }
 
 void testBarrierOptions() {
@@ -446,6 +527,7 @@ int main() {
     testBlackScholes();
     testBinomialTree();
     testMonteCarlo();
+    testAsianOptions();
     testBarrierOptions();
     testFiniteDifference();
     testImpliedVolatility();

@@ -58,6 +58,7 @@ set(SOURCES
     src/Option.cpp
     src/PricingEngine.cpp
     src/BlackScholes.cpp
+    src/AsianOption.cpp
     src/BarrierOption.cpp
     src/BinomialTree.cpp
     src/FiniteDifference.cpp

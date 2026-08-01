@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 62-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 73-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -50,10 +50,11 @@ The table below reflects what is compiled into the library today, not what is pl
 | `BinomialTree` | Yes | Yes | Yes | CRR lattice, European and American |
 | `Option` (types, params) | Yes | Yes | Yes | Validated parameter struct |
 | `MonteCarlo` | Yes | Yes | Yes | Euler/Milstein schemes; four variance-reduction modes |
+| `FiniteDifference` | Yes | Yes | Yes | Explicit/implicit/Crank-Nicolson; European and American |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 62 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 73 checks under CTest, no framework dependency |
 
 ---
 
@@ -70,10 +71,13 @@ The table below reflects what is compiled into the library today, not what is pl
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
+- Finite difference PDE engine: explicit, implicit, and Crank-Nicolson as one θ-scheme on a
+  log-spot grid, Thomas-algorithm tridiagonal solves, American exercise via projection, and
+  automatic time-axis refinement to keep the explicit scheme inside its stability bound
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 62-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 73-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -170,6 +174,7 @@ Derived engines, which are concrete and self-contained, re-enable copy and move.
 | Black-Scholes | European | `O(1)` | Yes | Closed-form baseline; calibration inner loops |
 | Binomial Tree (CRR) | European, American | `O(N²)` time, `O(N)` memory | Yes | Early exercise; discrete dividends |
 | Monte Carlo | European (extensible) | `O(paths × steps)` | Per-seed | Path dependence; high dimensionality |
+| Finite Difference | European, American | `O(M × N)` time, `O(M)` memory | Yes | PDE view; whole price surface per solve |
 
 ### Black-Scholes
 
@@ -242,6 +247,29 @@ one place it beats lattices and finite differences outright.
 **Its weaknesses** are the same in every implementation: convergence is slow, the result is a
 confidence interval rather than a number, and naive American exercise is not possible without a
 regression scheme such as Longstaff-Schwartz.
+
+### Finite Difference
+
+The PDE view of the same problem: discretise the Black-Scholes equation on a grid and march
+backward from the terminal payoff. The engine works in log-spot, where the PDE coefficients are
+constant — one tridiagonal stencil serves every time step, and the grid is centred so the initial
+spot falls exactly on a node, read off without interpolation.
+
+All three classical schemes are implemented as one θ-scheme: explicit (`θ = 0`), fully implicit
+(`θ = 1`), and Crank-Nicolson (`θ = ½`). Implicit steps solve the constant tridiagonal system with
+the Thomas algorithm in `O(M)` per step. The explicit scheme is only conditionally stable, so the
+engine refines its own time axis to keep the update coefficients positive rather than returning an
+oscillating solution. American exercise applies the projection `max(continuation, intrinsic)` at
+every node after each step — the same comparison the lattice makes, taken on the PDE grid.
+
+**Use it when** exercise is American and you want a second, methodologically independent check on
+the lattice, or when you want the whole price surface (every spot level, every time) from a single
+solve rather than a point value.
+
+**The trade-off**: Crank-Nicolson converges at `O(Δt², Δx²)` — better than the lattice's `O(1/N)`
+per unit of work — but the payoff kink at the strike can excite oscillations that plain
+Crank-Nicolson damps only slowly, and Dirichlet boundaries require the grid to be wide enough that
+truncation does not leak into the region of interest.
 
 ---
 
@@ -500,7 +528,7 @@ Ordered roughly by dependency, not by ambition.
 - [x] Antithetic variates and terminal-price control variates
 - [x] `ConvergenceAnalyzer` and `PerformanceBenchmark` implementations
 - [x] Implied volatility solver (Newton-Raphson, with a Brent fallback for low-vega regions)
-- [ ] Finite difference methods (explicit, implicit, Crank-Nicolson)
+- [x] Finite difference methods (explicit, implicit, Crank-Nicolson)
 
 **Instruments**
 - [ ] Barrier options (knock-in, knock-out)
@@ -632,6 +660,7 @@ option-converge/
 │       ├── BlackScholes.h          Analytic engine
 │       ├── BinomialTree.h          CRR lattice engine
 │       ├── MonteCarlo.h            Simulation engine
+│       ├── FiniteDifference.h      PDE engine (theta-scheme)
 │       ├── ImpliedVolatility.h     Implied volatility solver
 │       ├── ConvergenceAnalyzer.h   Convergence tooling
 │       └── PerformanceBenchmark.h  Benchmark and Timer
@@ -641,12 +670,13 @@ option-converge/
 │   ├── BlackScholes.cpp        Closed-form price and analytic Greeks
 │   ├── BinomialTree.cpp        Backward induction, iterative and memoised recursive
 │   ├── MonteCarlo.cpp          Path simulation, variance reduction, CRN Greeks
+│   ├── FiniteDifference.cpp    Theta-scheme PDE solver, Thomas algorithm
 │   ├── ImpliedVolatility.cpp   Newton-Raphson / Brent inversion of Black-Scholes
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
 └── tests/
-    └── test_main.cpp           62-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           73-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

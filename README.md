@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 105-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 115-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -53,10 +53,11 @@ The table below reflects what is compiled into the library today, not what is pl
 | `FiniteDifference` | Yes | Yes | Yes | Explicit/implicit/Crank-Nicolson; European and American |
 | Barrier options | Yes | Yes | Yes | Reiner-Rubinstein closed forms + Brownian-bridge MC |
 | Asian options | Yes | Yes | Yes | Geometric closed form; arithmetic MC with geometric CV |
+| `LongstaffSchwartz` | Yes | Yes | Yes | American exercise under Monte Carlo; quadratic basis |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 105 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 115 checks under CTest, no framework dependency |
 
 ---
 
@@ -73,6 +74,9 @@ The table below reflects what is compiled into the library today, not what is pl
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
+- Longstaff-Schwartz least-squares Monte Carlo for American exercise: regression of realised
+  continuation cashflows on in-the-money paths, intrinsic floor at inception, agreement with
+  the lattice verified for puts and dividend-paying calls
 - Asian options with discrete arithmetic and geometric averaging: exact closed form for the
   geometric contract (the geometric mean of lognormals is lognormal), used both as a test
   reference and as a control variate that collapses the arithmetic estimator's variance
@@ -85,7 +89,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 105-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 115-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -254,7 +258,10 @@ one place it beats lattices and finite differences outright.
 
 **Its weaknesses** are the same in every implementation: convergence is slow, the result is a
 confidence interval rather than a number, and naive American exercise is not possible without a
-regression scheme such as Longstaff-Schwartz.
+regression scheme such as Longstaff-Schwartz — which is implemented here as the dedicated
+`LongstaffSchwartz` pricer: backward induction over the exercise dates, with the continuation
+value on in-the-money paths estimated by least-squares regression on a quadratic basis in
+moneyness, cross-checked against the lattice in the test suite.
 
 ### Finite Difference
 
@@ -541,7 +548,7 @@ Ordered roughly by dependency, not by ambition.
 **Instruments**
 - [x] Barrier options (knock-in, knock-out)
 - [x] Asian options (arithmetic and geometric averaging)
-- [ ] Longstaff-Schwartz for American exercise under Monte Carlo
+- [x] Longstaff-Schwartz for American exercise under Monte Carlo
 
 **Models**
 - [ ] Heston stochastic volatility model
@@ -568,9 +575,11 @@ that has none.
    [Performance](#performance).
 3. **Discrete dividends are modelled as an enum value only** (`DividendType::DISCRETE`); no engine
    consumes it. Only the continuous dividend yield `q` is honoured.
-4. **Monte Carlo is European-only.** American exercise under simulation needs a regression scheme
-   (Longstaff-Schwartz); until then `MonteCarlo::price` throws on American options, as does
-   `BlackScholes`. Only `BinomialTree` prices American exercise.
+4. **The plain `MonteCarlo` engine is European-only** and throws on American options, as does
+   `BlackScholes`. American exercise under simulation is handled by the dedicated
+   `LongstaffSchwartz` pricer, which carries the usual caveats of the method: the regression
+   basis (quadratic in moneyness) truncates the continuation value, giving a small low bias,
+   and exercise is only observed on the discrete date grid.
 5. **The control variate coefficient is estimated in-sample**, which introduces a small (O(1/N))
    bias alongside the variance reduction. Standard practice, but worth knowing when comparing
    estimators.
@@ -671,6 +680,7 @@ option-converge/
 │       ├── FiniteDifference.h      PDE engine (theta-scheme)
 │       ├── BarrierOption.h         Barrier types, analytic + MC pricers
 │       ├── AsianOption.h           Asian types, geometric closed form + MC
+│       ├── LongstaffSchwartz.h     American exercise under Monte Carlo
 │       ├── ImpliedVolatility.h     Implied volatility solver
 │       ├── ConvergenceAnalyzer.h   Convergence tooling
 │       └── PerformanceBenchmark.h  Benchmark and Timer
@@ -683,12 +693,13 @@ option-converge/
 │   ├── FiniteDifference.cpp    Theta-scheme PDE solver, Thomas algorithm
 │   ├── BarrierOption.cpp       Reiner-Rubinstein formulas, bridge-corrected MC
 │   ├── AsianOption.cpp         Discrete geometric closed form, CV Monte Carlo
+│   ├── LongstaffSchwartz.cpp   Regression-based backward induction on paths
 │   ├── ImpliedVolatility.cpp   Newton-Raphson / Brent inversion of Black-Scholes
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
 └── tests/
-    └── test_main.cpp           105-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           115-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

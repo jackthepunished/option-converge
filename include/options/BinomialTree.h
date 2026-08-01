@@ -22,7 +22,12 @@ public:
     // Price an option using binomial tree
     [[nodiscard]] PricingResult price(const OptionParams& params) override;
 
-    // Calculate Greeks using finite differences
+    // Delta and Gamma read directly off the tree nodes; Vega, Theta, and Rho
+    // by finite differences. Bumping the spot does not work for second-order
+    // Greeks on a lattice: the price is piecewise-linear in S, so the default
+    // Gamma bump lands inside the noise floor. The step-1 and step-2 node
+    // layers, which backward induction produces anyway, ARE the bumped
+    // repricings - at exactly the spots the lattice can represent.
     [[nodiscard]] Greeks calculateGreeks(const OptionParams& params) override;
 
     [[nodiscard]] std::string getName() const noexcept override {
@@ -36,11 +41,21 @@ public:
 private:
     size_t steps_;  // Number of time steps
 
+    // Node values captured from the early tree layers during backward
+    // induction, from which Delta and Gamma follow without repricing.
+    struct NodeGreeks {
+        double delta;
+        double gamma;
+        bool valid;  // False when the tree is too shallow (fewer than 2 steps)
+    };
+
     // Calculate option value recursively
     [[nodiscard]] double priceRecursive(const OptionParams& params) const;
 
-    // Calculate option value iteratively (more memory efficient)
-    [[nodiscard]] double priceIterative(const OptionParams& params) const;
+    // Calculate option value iteratively (more memory efficient). When
+    // nodeGreeks is non-null, Delta and Gamma are extracted on the way.
+    [[nodiscard]] double priceIterative(const OptionParams& params,
+                                        NodeGreeks* nodeGreeks = nullptr) const;
 
     // Calculate payoff at expiration
     [[nodiscard]] double payoff(double spotPrice, const OptionParams& params) const noexcept;

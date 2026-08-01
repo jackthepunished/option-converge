@@ -109,6 +109,10 @@ void testBlackScholes() {
     checkNear(fdGreeks.theta, callGreeks.theta, 1e-3, "CRR theta matches BS");
     checkNear(fdGreeks.rho, callGreeks.rho, 1e-2, "CRR rho matches BS");
 
+    // Gamma is read off the tree nodes; the finite-difference route this
+    // replaced could not resolve it at all (Known Limitation 1, retired).
+    checkNear(fdGreeks.gamma, callGreeks.gamma, 5e-4, "CRR node Gamma matches BS");
+
     OptionParams american = kCall;
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)BlackScholes().price(american); },
@@ -145,6 +149,20 @@ void testBinomialTree() {
                          ExerciseType::AMERICAN);
     check(tree.price(deepPut).price >= 50.0 - 1e-9,
           "deep ITM American put >= intrinsic");
+
+    // Node Greeks on an American contract: the put's convexity must survive
+    // the early-exercise kink.
+    const Greeks amGreeks = tree.calculateGreeks(americanPut);
+    check(std::isfinite(amGreeks.gamma) && amGreeks.gamma > 0.0,
+          "American put node Gamma finite and positive");
+
+    // Degenerate depths: a two-step tree extracts Gamma from its terminal
+    // layer; a one-step tree cannot and falls back to finite differences.
+    const Greeks tinyGreeks = BinomialTree(2).calculateGreeks(kCall);
+    check(std::isfinite(tinyGreeks.gamma) && tinyGreeks.gamma > 0.0,
+          "two-step tree Gamma finite and positive");
+    const Greeks oneStep = BinomialTree(1).calculateGreeks(kCall);
+    check(std::isfinite(oneStep.delta), "one-step tree Greeks fall back cleanly");
 
     checkThrows([] { BinomialTree(0); }, "zero steps rejected");
 }

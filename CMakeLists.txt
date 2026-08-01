@@ -62,6 +62,7 @@ set(SOURCES
     src/BarrierOption.cpp
     src/BinomialTree.cpp
     src/FiniteDifference.cpp
+    src/Heston.cpp
     src/ImpliedVolatility.cpp
     src/LongstaffSchwartz.cpp
     src/MonteCarlo.cpp

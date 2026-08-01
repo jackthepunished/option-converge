@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 51-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 62-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -50,9 +50,10 @@ The table below reflects what is compiled into the library today, not what is pl
 | `BinomialTree` | Yes | Yes | Yes | CRR lattice, European and American |
 | `Option` (types, params) | Yes | Yes | Yes | Validated parameter struct |
 | `MonteCarlo` | Yes | Yes | Yes | Euler/Milstein schemes; four variance-reduction modes |
+| `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 51 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 62 checks under CTest, no framework dependency |
 
 ---
 
@@ -69,8 +70,10 @@ The table below reflects what is compiled into the library today, not what is pl
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
+- Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
+  for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 51-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 62-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -496,7 +499,7 @@ Ordered roughly by dependency, not by ambition.
 - [x] `MonteCarlo` implementation — Euler and Milstein schemes
 - [x] Antithetic variates and terminal-price control variates
 - [x] `ConvergenceAnalyzer` and `PerformanceBenchmark` implementations
-- [ ] Implied volatility solver (Newton-Raphson, with a Brent fallback for low-vega regions)
+- [x] Implied volatility solver (Newton-Raphson, with a Brent fallback for low-vega regions)
 - [ ] Finite difference methods (explicit, implicit, Crank-Nicolson)
 
 **Instruments**
@@ -629,6 +632,7 @@ option-converge/
 │       ├── BlackScholes.h          Analytic engine
 │       ├── BinomialTree.h          CRR lattice engine
 │       ├── MonteCarlo.h            Simulation engine
+│       ├── ImpliedVolatility.h     Implied volatility solver
 │       ├── ConvergenceAnalyzer.h   Convergence tooling
 │       └── PerformanceBenchmark.h  Benchmark and Timer
 ├── src/
@@ -637,11 +641,12 @@ option-converge/
 │   ├── BlackScholes.cpp        Closed-form price and analytic Greeks
 │   ├── BinomialTree.cpp        Backward induction, iterative and memoised recursive
 │   ├── MonteCarlo.cpp          Path simulation, variance reduction, CRN Greeks
+│   ├── ImpliedVolatility.cpp   Newton-Raphson / Brent inversion of Black-Scholes
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
 └── tests/
-    └── test_main.cpp           51-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           62-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

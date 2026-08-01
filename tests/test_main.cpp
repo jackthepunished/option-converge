@@ -4,6 +4,7 @@
 #include "options/BinomialTree.h"
 #include "options/BlackScholes.h"
 #include "options/ConvergenceAnalyzer.h"
+#include "options/FiniteDifference.h"
 #include "options/ImpliedVolatility.h"
 #include "options/MonteCarlo.h"
 #include "options/PerformanceBenchmark.h"
@@ -186,6 +187,51 @@ void testMonteCarlo() {
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
 }
 
+void testFiniteDifference() {
+    using namespace Options;
+
+    // All three schemes must converge to the analytic European price. The
+    // explicit scheme refines its own time axis to stay inside its stability
+    // bound, so the same grid request is safe for every scheme.
+    FiniteDifference explicitFd(200, 200, FDScheme::EXPLICIT);
+    FiniteDifference implicitFd(200, 200, FDScheme::IMPLICIT);
+    FiniteDifference cn(200, 200, FDScheme::CRANK_NICOLSON);
+
+    checkNear(explicitFd.price(kCall).price, kBsCall, 0.01, "FD explicit call vs BS");
+    checkNear(implicitFd.price(kCall).price, kBsCall, 0.01, "FD implicit call vs BS");
+    checkNear(cn.price(kCall).price, kBsCall, 0.005, "FD Crank-Nicolson call vs BS");
+    checkNear(cn.price(kPut).price, kBsPut, 0.005, "FD Crank-Nicolson put vs BS");
+
+    checkNear(cn.price(kCall).price - cn.price(kPut).price, kParity, 5e-3,
+              "FD put-call parity");
+
+    // American exercise must agree with the lattice, the established
+    // early-exercise reference in this library.
+    BinomialTree tree(1000);
+    OptionParams americanPut = kPut;
+    americanPut.exerciseType = ExerciseType::AMERICAN;
+    const double treeAmPut = tree.price(americanPut).price;
+    checkNear(cn.price(americanPut).price, treeAmPut, 0.02,
+              "FD American put matches lattice");
+    check(cn.price(americanPut).price > cn.price(kPut).price + 0.05,
+          "FD American put has early-exercise premium");
+
+    // Without dividends early exercise of a call is never optimal.
+    OptionParams americanCall = kCall;
+    americanCall.exerciseType = ExerciseType::AMERICAN;
+    checkNear(cn.price(americanCall).price, cn.price(kCall).price, 1e-6,
+              "FD American call equals European call (q=0)");
+
+    // Deep in-the-money American put must be worth at least intrinsic.
+    OptionParams deepPut(50.0, 100.0, 0.05, 0.20, 1.0, 0.0, OptionType::PUT,
+                         ExerciseType::AMERICAN);
+    check(cn.price(deepPut).price >= 50.0 - 1e-9,
+          "FD deep ITM American put >= intrinsic");
+
+    checkThrows([] { FiniteDifference(2, 100); }, "too-coarse spot grid rejected");
+    checkThrows([] { FiniteDifference(100, 0); }, "zero time steps rejected");
+}
+
 void testImpliedVolatility() {
     using namespace Options;
     ImpliedVolatility iv;
@@ -304,6 +350,7 @@ int main() {
     testBlackScholes();
     testBinomialTree();
     testMonteCarlo();
+    testFiniteDifference();
     testImpliedVolatility();
     testConvergenceAnalyzer();
     testPerformanceBenchmark();

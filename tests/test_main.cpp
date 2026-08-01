@@ -4,6 +4,7 @@
 #include "options/BinomialTree.h"
 #include "options/BlackScholes.h"
 #include "options/ConvergenceAnalyzer.h"
+#include "options/ImpliedVolatility.h"
 #include "options/MonteCarlo.h"
 #include "options/PerformanceBenchmark.h"
 
@@ -185,6 +186,60 @@ void testMonteCarlo() {
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
 }
 
+void testImpliedVolatility() {
+    using namespace Options;
+    ImpliedVolatility iv;
+    BlackScholes bs;
+
+    // Round trip: price at a known sigma, recover that sigma. Sweep vol
+    // levels, moneyness, both option types, and a dividend yield.
+    const double sigmas[] = {0.05, 0.20, 0.35, 0.80};
+    for (const double sigma : sigmas) {
+        OptionParams p = kCall;
+        p.volatility = sigma;
+        const double price = bs.price(p).price;
+        checkNear(iv.solve(price, p).impliedVol, sigma, 1e-6,
+                  "IV round trip call sigma=" + std::to_string(sigma));
+    }
+    {
+        OptionParams p(80.0, 100.0, 0.05, 0.25, 0.5, 0.03, OptionType::PUT,
+                       ExerciseType::EUROPEAN);
+        const double price = bs.price(p).price;
+        checkNear(iv.solve(price, p).impliedVol, 0.25, 1e-6,
+                  "IV round trip OTM-spot put with dividends");
+    }
+
+    // The reference option's textbook price must invert to its 20% vol.
+    checkNear(iv.solve(kBsCall, kCall).impliedVol, 0.20, 1e-5,
+              "IV inverts reference call price");
+    checkNear(iv.solve(kBsPut, kPut).impliedVol, 0.20, 1e-5,
+              "IV inverts reference put price");
+
+    // Deep in-the-money, short maturity: vega is tiny and Newton has almost
+    // nothing to work with. The solver must still recover the vol (via the
+    // Brent fallback when needed).
+    {
+        OptionParams p(100.0, 60.0, 0.05, 0.30, 0.25, 0.0, OptionType::CALL,
+                       ExerciseType::EUROPEAN);
+        const double price = bs.price(p).price;
+        checkNear(iv.solve(price, p).impliedVol, 0.30, 1e-4,
+                  "IV low-vega deep ITM call");
+    }
+
+    // Prices outside the no-arbitrage band have no implied vol.
+    checkThrows([&] { (void)iv.solve(2.0, kCall); },
+                "IV rejects price below intrinsic bound");
+    checkThrows([&] { (void)iv.solve(100.0, kCall); },
+                "IV rejects price above spot bound");
+    checkThrows(
+        [&] {
+            OptionParams american = kCall;
+            american.exerciseType = ExerciseType::AMERICAN;
+            (void)iv.solve(10.0, american);
+        },
+        "IV rejects American options");
+}
+
 void testConvergenceAnalyzer() {
     using namespace Options;
     ConvergenceAnalyzer analyzer;
@@ -249,6 +304,7 @@ int main() {
     testBlackScholes();
     testBinomialTree();
     testMonteCarlo();
+    testImpliedVolatility();
     testConvergenceAnalyzer();
     testPerformanceBenchmark();
 

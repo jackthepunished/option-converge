@@ -59,6 +59,7 @@ set(SOURCES
     src/PricingEngine.cpp
     src/BlackScholes.cpp
     src/BinomialTree.cpp
+    src/ImpliedVolatility.cpp
     src/MonteCarlo.cpp
     src/ConvergenceAnalyzer.cpp
     src/PerformanceBenchmark.cpp

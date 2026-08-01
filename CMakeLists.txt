@@ -21,7 +21,7 @@ else()
         -Wall                  # Enable all warnings
         -Wextra                # Extra warnings
         -Wpedantic             # Pedantic warnings
-        "$<$<CONFIG:Release>:-O3;-ffast-math;-funroll-loops;-finline-functions;-flto>"
+        "$<$<CONFIG:Release>:-O3;-ffast-math;-funroll-loops;-finline-functions>"
     )
     # Not every compiler accepts -march=native (e.g. older Apple Clang on arm64)
     include(CheckCXXCompilerFlag)
@@ -29,7 +29,18 @@ else()
     if(COMPILER_SUPPORTS_MARCH_NATIVE)
         add_compile_options("$<$<CONFIG:Release>:-march=native;-mtune=native>")
     endif()
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto")
+    # LTO only where the entire toolchain (compiler, archiver, linker plugin)
+    # supports it. Hardcoding -flto breaks when the compiler and the linker's
+    # LTO plugin come from different versions, as on CI runners where clang 18
+    # emits bitcode the system bfd/LLVMgold plugin (LLVM 16) cannot read.
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT LTO_SUPPORTED OUTPUT LTO_CHECK_OUTPUT LANGUAGES CXX)
+    if(LTO_SUPPORTED)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+        message(STATUS "IPO/LTO enabled for Release")
+    else()
+        message(STATUS "IPO/LTO not supported by this toolchain, continuing without it")
+    endif()
 endif()
 
 # Include directories

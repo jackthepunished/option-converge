@@ -1,10 +1,10 @@
 #include "options/MonteCarlo.h"
-#include "options/BlackScholes.h"
 
 #include <chrono>
 #include <cmath>
-#include <numeric>
+#include <random>
 #include <stdexcept>
+#include <vector>
 
 namespace Options {
 
@@ -14,6 +14,24 @@ namespace {
 // terminal price, but the discretization schemes are exercised as specified so
 // their bias can be studied by the convergence analyzer.
 constexpr size_t kStepsPerPath = 252;
+
+// Path work is split into this many chunks regardless of how many threads
+// run them. Each chunk owns a deterministically seeded RNG, so the estimate
+// depends only on the seed and the partition - never on the thread count.
+constexpr int kNumChunks = 256;
+
+// Distinct, deterministic seed per (engine seed, chunk) pair. The golden
+// ratio increment keeps neighbouring chunk seeds far apart in state space.
+[[nodiscard]] unsigned int chunkSeed(unsigned int seed, int chunk) noexcept {
+    return seed + 0x9E3779B9u * static_cast<unsigned int>(chunk + 1);
+}
+
+// Number of samples chunk c takes when n samples are spread over the chunks.
+[[nodiscard]] size_t chunkShare(size_t n, int c) noexcept {
+    const size_t base = n / kNumChunks;
+    const size_t rem = n % kNumChunks;
+    return base + (static_cast<size_t>(c) < rem ? 1 : 0);
+}
 
 // Advance one GBM path to maturity given a pre-drawn vector of standard
 // normals. Milstein adds the second-order correction term to Euler.
@@ -44,22 +62,30 @@ constexpr size_t kStepsPerPath = 252;
     return s;
 }
 
-[[nodiscard]] double mean(const std::vector<double>& xs) {
-    return std::accumulate(xs.begin(), xs.end(), 0.0) / static_cast<double>(xs.size());
+// Sample standard error from accumulated first and second moments (n-1
+// denominator, matching the previous vector-based implementation).
+[[nodiscard]] double standardErrorFromSums(double sum, double sumSq, size_t n) noexcept {
+    if (n < 2) {
+        return 0.0;
+    }
+    const double nd = static_cast<double>(n);
+    const double mean = sum / nd;
+    const double variance = std::fmax(sumSq - nd * mean * mean, 0.0) / (nd - 1.0);
+    return std::sqrt(variance / nd);
 }
 
 } // namespace
 
 MonteCarlo::MonteCarlo(size_t numPaths, DiscretizationScheme scheme,
                        VarianceReduction varRed, unsigned int seed)
-    : numPaths_(numPaths), scheme_(scheme), varRed_(varRed), rng_(seed) {
+    : numPaths_(numPaths), scheme_(scheme), varRed_(varRed), seed_(seed) {
     if (numPaths == 0) {
         throw std::invalid_argument("Monte Carlo requires at least one path");
     }
 }
 
 void MonteCarlo::setSeed(unsigned int seed) {
-    rng_.seed(seed);
+    seed_ = seed;
 }
 
 std::string MonteCarlo::getName() const {
@@ -74,160 +100,161 @@ std::string MonteCarlo::getName() const {
     return name;
 }
 
-double MonteCarlo::randomNormal() {
-    std::normal_distribution<double> normal(0.0, 1.0);
-    return normal(rng_);
-}
-
 double MonteCarlo::payoff(double finalPrice, const OptionParams& params) const noexcept {
     return params.isCall() ? std::fmax(finalPrice - params.strikePrice, 0.0)
                            : std::fmax(params.strikePrice - finalPrice, 0.0);
 }
 
-double MonteCarlo::simulatePathEuler(const OptionParams& params) {
-    std::vector<double> normals(kStepsPerPath);
-    for (double& z : normals) {
-        z = randomNormal();
-    }
-    return terminalPrice(params, normals, DiscretizationScheme::EULER, false);
-}
-
-double MonteCarlo::simulatePathMilstein(const OptionParams& params) {
-    std::vector<double> normals(kStepsPerPath);
-    for (double& z : normals) {
-        z = randomNormal();
-    }
-    return terminalPrice(params, normals, DiscretizationScheme::MILSTEIN, false);
-}
-
-double MonteCarlo::calculateStandardError(const std::vector<double>& payoffs) const {
-    const size_t n = payoffs.size();
-    if (n < 2) {
-        return 0.0;
-    }
-    const double m = mean(payoffs);
-    double sumSq = 0.0;
-    for (double x : payoffs) {
-        const double dev = x - m;
-        sumSq += dev * dev;
-    }
-    const double variance = sumSq / static_cast<double>(n - 1);
-    return std::sqrt(variance / static_cast<double>(n));
-}
-
 // Plain Monte Carlo: one independent path per sample.
-double MonteCarlo::priceBasic(const OptionParams& params, double& stdError) {
+double MonteCarlo::priceBasic(const OptionParams& params, double& stdError) const {
     const double discount = std::exp(-params.riskFreeRate * params.timeToMaturity);
 
-    std::vector<double> discounted(numPaths_);
-    for (size_t i = 0; i < numPaths_; ++i) {
-        const double sT = (scheme_ == DiscretizationScheme::EULER)
-                              ? simulatePathEuler(params)
-                              : simulatePathMilstein(params);
-        discounted[i] = discount * payoff(sT, params);
+    double sumY = 0.0, sumY2 = 0.0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+ : sumY, sumY2) schedule(static)
+#endif
+    for (int c = 0; c < kNumChunks; ++c) {
+        std::mt19937 rng(chunkSeed(seed_, c));
+        std::normal_distribution<double> normal(0.0, 1.0);
+        std::vector<double> normals(kStepsPerPath);
+        const size_t share = chunkShare(numPaths_, c);
+        for (size_t i = 0; i < share; ++i) {
+            for (double& z : normals) {
+                z = normal(rng);
+            }
+            const double sT = terminalPrice(params, normals, scheme_, false);
+            const double y = discount * payoff(sT, params);
+            sumY += y;
+            sumY2 += y * y;
+        }
     }
 
-    stdError = calculateStandardError(discounted);
-    return mean(discounted);
+    stdError = standardErrorFromSums(sumY, sumY2, numPaths_);
+    return sumY / static_cast<double>(numPaths_);
 }
 
 // Antithetic variates: each draw is reused with its sign flipped, and the two
 // path payoffs are averaged. The pair averages are the i.i.d. samples.
-double MonteCarlo::priceAntithetic(const OptionParams& params, double& stdError) {
+double MonteCarlo::priceAntithetic(const OptionParams& params, double& stdError) const {
     const double discount = std::exp(-params.riskFreeRate * params.timeToMaturity);
     const size_t numPairs = (numPaths_ + 1) / 2;
 
-    std::vector<double> normals(kStepsPerPath);
-    std::vector<double> pairMeans(numPairs);
-
-    for (size_t i = 0; i < numPairs; ++i) {
-        for (double& z : normals) {
-            z = randomNormal();
+    double sumY = 0.0, sumY2 = 0.0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+ : sumY, sumY2) schedule(static)
+#endif
+    for (int c = 0; c < kNumChunks; ++c) {
+        std::mt19937 rng(chunkSeed(seed_, c));
+        std::normal_distribution<double> normal(0.0, 1.0);
+        std::vector<double> normals(kStepsPerPath);
+        const size_t share = chunkShare(numPairs, c);
+        for (size_t i = 0; i < share; ++i) {
+            for (double& z : normals) {
+                z = normal(rng);
+            }
+            const double sUp = terminalPrice(params, normals, scheme_, false);
+            const double sDown = terminalPrice(params, normals, scheme_, true);
+            const double y = discount * 0.5 * (payoff(sUp, params) + payoff(sDown, params));
+            sumY += y;
+            sumY2 += y * y;
         }
-        const double sUp = terminalPrice(params, normals, scheme_, false);
-        const double sDown = terminalPrice(params, normals, scheme_, true);
-        pairMeans[i] = discount * 0.5 * (payoff(sUp, params) + payoff(sDown, params));
     }
 
-    stdError = calculateStandardError(pairMeans);
-    return mean(pairMeans);
+    stdError = standardErrorFromSums(sumY, sumY2, numPairs);
+    return sumY / static_cast<double>(numPairs);
 }
 
 // Control variates: the discounted terminal stock price has known expectation
 // S0 * exp(-q T), so its sampling error is subtracted from the payoff estimate
-// with the variance-minimizing coefficient beta = Cov(Y, C) / Var(C).
-double MonteCarlo::priceControlVariate(const OptionParams& params, double& stdError) {
+// with the variance-minimizing coefficient beta = Cov(Y, C) / Var(C). All five
+// moment sums are additive, so the correction is applied after the reduction.
+double MonteCarlo::priceControlVariate(const OptionParams& params, double& stdError) const {
     const double discount = std::exp(-params.riskFreeRate * params.timeToMaturity);
     const double controlMean =
         params.spotPrice * std::exp(-params.dividendYield * params.timeToMaturity);
 
-    std::vector<double> discounted(numPaths_);
-    std::vector<double> controls(numPaths_);
-    for (size_t i = 0; i < numPaths_; ++i) {
-        const double sT = (scheme_ == DiscretizationScheme::EULER)
-                              ? simulatePathEuler(params)
-                              : simulatePathMilstein(params);
-        discounted[i] = discount * payoff(sT, params);
-        controls[i] = discount * sT;
+    double sumY = 0.0, sumY2 = 0.0, sumC = 0.0, sumC2 = 0.0, sumYC = 0.0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+ : sumY, sumY2, sumC, sumC2, sumYC) schedule(static)
+#endif
+    for (int c = 0; c < kNumChunks; ++c) {
+        std::mt19937 rng(chunkSeed(seed_, c));
+        std::normal_distribution<double> normal(0.0, 1.0);
+        std::vector<double> normals(kStepsPerPath);
+        const size_t share = chunkShare(numPaths_, c);
+        for (size_t i = 0; i < share; ++i) {
+            for (double& z : normals) {
+                z = normal(rng);
+            }
+            const double sT = terminalPrice(params, normals, scheme_, false);
+            const double y = discount * payoff(sT, params);
+            const double ctrl = discount * sT;
+            sumY += y;
+            sumY2 += y * y;
+            sumC += ctrl;
+            sumC2 += ctrl * ctrl;
+            sumYC += y * ctrl;
+        }
     }
 
-    const double yBar = mean(discounted);
-    const double cBar = mean(controls);
-    double covYC = 0.0;
-    double varC = 0.0;
-    for (size_t i = 0; i < numPaths_; ++i) {
-        covYC += (discounted[i] - yBar) * (controls[i] - cBar);
-        varC += (controls[i] - cBar) * (controls[i] - cBar);
-    }
+    const double n = static_cast<double>(numPaths_);
+    const double meanY = sumY / n;
+    const double meanC = sumC / n;
+    const double covYC = sumYC - n * meanY * meanC;
+    const double varC = std::fmax(sumC2 - n * meanC * meanC, 0.0);
     const double beta = (varC > 0.0) ? covYC / varC : 0.0;
 
-    std::vector<double> adjusted(numPaths_);
-    for (size_t i = 0; i < numPaths_; ++i) {
-        adjusted[i] = discounted[i] - beta * (controls[i] - controlMean);
-    }
-
-    stdError = calculateStandardError(adjusted);
-    return mean(adjusted);
+    const double varY = std::fmax(sumY2 - n * meanY * meanY, 0.0);
+    const double varAdj =
+        std::fmax(varY - 2.0 * beta * covYC + beta * beta * varC, 0.0) / (n - 1.0);
+    stdError = std::sqrt(varAdj / n);
+    return meanY - beta * (meanC - controlMean);
 }
 
 // Antithetic pairs first, then the control variate applied to the pair means.
-double MonteCarlo::priceBoth(const OptionParams& params, double& stdError) {
+double MonteCarlo::priceBoth(const OptionParams& params, double& stdError) const {
     const double discount = std::exp(-params.riskFreeRate * params.timeToMaturity);
     const double controlMean =
         params.spotPrice * std::exp(-params.dividendYield * params.timeToMaturity);
     const size_t numPairs = (numPaths_ + 1) / 2;
 
-    std::vector<double> normals(kStepsPerPath);
-    std::vector<double> pairPayoffs(numPairs);
-    std::vector<double> pairControls(numPairs);
-
-    for (size_t i = 0; i < numPairs; ++i) {
-        for (double& z : normals) {
-            z = randomNormal();
+    double sumY = 0.0, sumY2 = 0.0, sumC = 0.0, sumC2 = 0.0, sumYC = 0.0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+ : sumY, sumY2, sumC, sumC2, sumYC) schedule(static)
+#endif
+    for (int c = 0; c < kNumChunks; ++c) {
+        std::mt19937 rng(chunkSeed(seed_, c));
+        std::normal_distribution<double> normal(0.0, 1.0);
+        std::vector<double> normals(kStepsPerPath);
+        const size_t share = chunkShare(numPairs, c);
+        for (size_t i = 0; i < share; ++i) {
+            for (double& z : normals) {
+                z = normal(rng);
+            }
+            const double sUp = terminalPrice(params, normals, scheme_, false);
+            const double sDown = terminalPrice(params, normals, scheme_, true);
+            const double y = discount * 0.5 * (payoff(sUp, params) + payoff(sDown, params));
+            const double ctrl = discount * 0.5 * (sUp + sDown);
+            sumY += y;
+            sumY2 += y * y;
+            sumC += ctrl;
+            sumC2 += ctrl * ctrl;
+            sumYC += y * ctrl;
         }
-        const double sUp = terminalPrice(params, normals, scheme_, false);
-        const double sDown = terminalPrice(params, normals, scheme_, true);
-        pairPayoffs[i] = discount * 0.5 * (payoff(sUp, params) + payoff(sDown, params));
-        pairControls[i] = discount * 0.5 * (sUp + sDown);
     }
 
-    const double yBar = mean(pairPayoffs);
-    const double cBar = mean(pairControls);
-    double covYC = 0.0;
-    double varC = 0.0;
-    for (size_t i = 0; i < numPairs; ++i) {
-        covYC += (pairPayoffs[i] - yBar) * (pairControls[i] - cBar);
-        varC += (pairControls[i] - cBar) * (pairControls[i] - cBar);
-    }
+    const double n = static_cast<double>(numPairs);
+    const double meanY = sumY / n;
+    const double meanC = sumC / n;
+    const double covYC = sumYC - n * meanY * meanC;
+    const double varC = std::fmax(sumC2 - n * meanC * meanC, 0.0);
     const double beta = (varC > 0.0) ? covYC / varC : 0.0;
 
-    std::vector<double> adjusted(numPairs);
-    for (size_t i = 0; i < numPairs; ++i) {
-        adjusted[i] = pairPayoffs[i] - beta * (pairControls[i] - controlMean);
-    }
-
-    stdError = calculateStandardError(adjusted);
-    return mean(adjusted);
+    const double varY = std::fmax(sumY2 - n * meanY * meanY, 0.0);
+    const double varAdj =
+        std::fmax(varY - 2.0 * beta * covYC + beta * beta * varC, 0.0) / (n - 1.0);
+    stdError = std::sqrt(varAdj / n);
+    return meanY - beta * (meanC - controlMean);
 }
 
 PricingResult MonteCarlo::price(const OptionParams& params) {
@@ -259,19 +286,18 @@ PricingResult MonteCarlo::price(const OptionParams& params) {
     result.computationTime =
         std::chrono::duration<double, std::milli>(end - start).count();
 
-    // Sample vectors plus the per-path normal draws dominate.
-    result.memoryUsed = numPaths_ * 2 * sizeof(double) + kStepsPerPath * sizeof(double);
+    // Accumulation happens in scalar sums; the per-chunk normal draw buffers
+    // dominate what little the engine allocates.
+    result.memoryUsed = kNumChunks * kStepsPerPath * sizeof(double);
 
     return result;
 }
 
 Greeks MonteCarlo::calculateGreeks(const OptionParams& params) {
-    // Finite differences on independent samples would be dominated by Monte
-    // Carlo noise. Restoring the same RNG state before each repricing (common
-    // random numbers) makes the noise cancel in the differences.
-    const std::mt19937 saved = rng_;
+    // Common random numbers by construction: pricing is a pure function of
+    // the seed, so every repricing below reuses exactly the same draws and
+    // the sampling noise cancels in the finite differences.
     const auto priceAt = [&](const OptionParams& p) {
-        rng_ = saved;
         return price(p).price;
     };
 
@@ -312,7 +338,6 @@ Greeks MonteCarlo::calculateGreeks(const OptionParams& params) {
         greeks.theta = (priceAt(forward) - priceCenter) / hT / 365.0;
     }
 
-    rng_ = saved;
     return greeks;
 }
 

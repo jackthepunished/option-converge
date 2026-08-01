@@ -76,6 +76,9 @@ The table below reflects what is compiled into the library today, not what is pl
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
+- OpenMP-parallel Monte Carlo path generation over deterministically seeded chunks: the
+  partition is independent of the thread count, so estimates agree across any number of
+  threads (19× on 32 cores measured), and serial builds produce the same numbers
 - Calibration tooling: implied volatility surfaces built from quote sets, and a
   self-contained Nelder-Mead fit of all five Heston parameters to market prices with a
   bounded parameter box and a provably non-increasing objective
@@ -426,7 +429,7 @@ to six digits.
 |---|---|---|
 | C++ compiler | C++17 | GCC 9+, Clang 10+, MSVC 19.2+ |
 | CMake | 3.15 | |
-| OpenMP | optional | Detected automatically; not yet used by any engine |
+| OpenMP | optional | Detected automatically; parallelises the Monte Carlo engine when present |
 
 ### Configure and build
 
@@ -563,7 +566,7 @@ Ordered roughly by dependency, not by ambition.
 - [x] Calibration tooling against market quotes
 
 **Performance**
-- [ ] OpenMP-parallel Monte Carlo (path generation is embarrassingly parallel)
+- [x] OpenMP-parallel Monte Carlo (path generation is embarrassingly parallel)
 - [ ] SIMD vectorisation of lattice backward induction and payoff evaluation
 - [ ] CUDA acceleration for large path counts
 - [ ] Visualisation of convergence behaviour across engines

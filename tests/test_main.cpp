@@ -186,6 +186,12 @@ void testMonteCarlo() {
     checkNear(a.price(kCall).price, b.price(kCall).price, 1e-12,
               "same seed gives identical MC price");
 
+    // Pricing is a pure function of the seed: repeated calls on one engine
+    // reuse identical draws, agreeing to summation-order noise at most.
+    MonteCarlo pure(20000);
+    checkNear(pure.price(kCall).price, pure.price(kCall).price, 1e-9,
+              "repeated pricing reuses identical draws");
+
     MonteCarlo mc(10000);
     OptionParams american = kPut;
     american.exerciseType = ExerciseType::AMERICAN;

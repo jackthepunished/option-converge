@@ -2,8 +2,6 @@
 #define MONTE_CARLO_H
 
 #include "PricingEngine.h"
-#include <random>
-#include <vector>
 
 namespace Options {
 
@@ -60,34 +58,31 @@ private:
     size_t numPaths_;
     DiscretizationScheme scheme_;
     VarianceReduction varRed_;
-    std::mt19937 rng_;
+    unsigned int seed_;
 
-    // Simulate one path using Euler scheme
-    [[nodiscard]] double simulatePathEuler(const OptionParams& params);
-
-    // Simulate one path using Milstein scheme
-    [[nodiscard]] double simulatePathMilstein(const OptionParams& params);
+    // Path work is partitioned into a fixed set of chunks, each with its own
+    // deterministically seeded RNG, and the chunk loop is parallelised with
+    // OpenMP where available. The partition - and therefore every random
+    // draw - is independent of the thread count; estimates agree across
+    // thread counts (and OpenMP-free builds) up to floating-point summation
+    // order, around 1e-12 relative. Pricing is a pure function of the seed,
+    // which is also what makes common-random-numbers Greeks work without
+    // explicit RNG state management.
 
     // Calculate payoff at maturity
     [[nodiscard]] double payoff(double finalPrice, const OptionParams& params) const noexcept;
 
-    // Standard normal random number
-    [[nodiscard]] double randomNormal();
-
     // Price with basic Monte Carlo
-    [[nodiscard]] double priceBasic(const OptionParams& params, double& stdError);
+    [[nodiscard]] double priceBasic(const OptionParams& params, double& stdError) const;
 
     // Price with antithetic variates
-    [[nodiscard]] double priceAntithetic(const OptionParams& params, double& stdError);
+    [[nodiscard]] double priceAntithetic(const OptionParams& params, double& stdError) const;
 
-    // Price with control variates (using Black-Scholes)
-    [[nodiscard]] double priceControlVariate(const OptionParams& params, double& stdError);
+    // Price with control variates (using the discounted terminal price)
+    [[nodiscard]] double priceControlVariate(const OptionParams& params, double& stdError) const;
 
     // Price with both variance reduction techniques
-    [[nodiscard]] double priceBoth(const OptionParams& params, double& stdError);
-
-    // Calculate standard error
-    [[nodiscard]] double calculateStandardError(const std::vector<double>& payoffs) const;
+    [[nodiscard]] double priceBoth(const OptionParams& params, double& stdError) const;
 };
 
 } // namespace Options

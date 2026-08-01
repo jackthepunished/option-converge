@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-gcc-release
+            os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+            build_type: Release
+          - name: ubuntu-clang-release
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            build_type: Release
+          - name: macos-clang-release
+            os: macos-latest
+            cc: clang
+            cxx: clang++
+            build_type: Release
+          - name: windows-msvc-release
+            os: windows-latest
+            build_type: Release
+          # Debug exists to keep the per-configuration flags honest: MSVC
+          # Debug + /O2 used to fail outright (/RTC1 collision).
+          - name: windows-msvc-debug
+            os: windows-latest
+            build_type: Debug
+
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure

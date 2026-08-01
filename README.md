@@ -1,6 +1,7 @@
 # Option Converge
 
 [![Language](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![CI](https://github.com/jackthepunished/option-converge/actions/workflows/ci.yml/badge.svg)](https://github.com/jackthepunished/option-converge/actions/workflows/ci.yml)
 [![Build](https://img.shields.io/badge/build-CMake%20%E2%89%A5%203.15-064F8C.svg)](https://cmake.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#build-instructions)
 [![Status](https://img.shields.io/badge/status-core%20complete-brightgreen.svg)](#current-status)
@@ -419,12 +420,10 @@ Run the test suite:
 cd build && ctest --output-on-failure
 ```
 
-> [!IMPORTANT]
-> On MSVC, `--config Release` is **required**. `CMakeLists.txt` applies `/O2` unconditionally rather
-> than per-configuration, which collides with the `/RTC1` runtime checks that multi-configuration
-> generators inject into Debug builds; the compile fails with `error D8016`. Building Debug on MSVC
-> requires first moving the optimisation flags behind a configuration guard, such as
-> `target_compile_options(optionslib PRIVATE $<$<CONFIG:Release>:/O2>)`.
+Optimisation flags are applied per-configuration (`$<$<CONFIG:Release>:...>`), so Debug builds work
+on every compiler, including MSVC where `/O2` would otherwise collide with the `/RTC1` runtime
+checks that multi-configuration generators inject into Debug. CI builds both configurations on
+Windows to keep that true. Expect Debug Monte Carlo tests to be slow (~30 s): the paths run at `-O0`.
 
 `-march=native` tunes the binary for the building machine's instruction set. Remove it if the
 artefact must run on other hardware.
@@ -490,8 +489,8 @@ Ordered roughly by dependency, not by ambition.
 **Correctness and infrastructure (prerequisite for everything below)**
 - [x] Fix analytic Theta; reconcile Greek scaling conventions across the analytic and finite-difference paths
 - [x] Unit test suite with a `ctest` target, covering parity, convergence, and known reference values
-- [ ] Per-configuration compiler flags so that Debug builds work on MSVC
-- [ ] Continuous integration across GCC, Clang, and MSVC
+- [x] Per-configuration compiler flags so that Debug builds work on MSVC
+- [x] Continuous integration across GCC, Clang, and MSVC
 
 **Engines**
 - [x] `MonteCarlo` implementation — Euler and Milstein schemes

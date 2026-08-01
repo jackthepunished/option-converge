@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 115-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 128-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -54,10 +54,11 @@ The table below reflects what is compiled into the library today, not what is pl
 | Barrier options | Yes | Yes | Yes | Reiner-Rubinstein closed forms + Brownian-bridge MC |
 | Asian options | Yes | Yes | Yes | Geometric closed form; arithmetic MC with geometric CV |
 | `LongstaffSchwartz` | Yes | Yes | Yes | American exercise under Monte Carlo; quadratic basis |
+| Heston model | Yes | Yes | Yes | Little-trap characteristic function + full truncation MC |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 115 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 128 checks under CTest, no framework dependency |
 
 ---
 
@@ -74,6 +75,9 @@ The table below reflects what is compiled into the library today, not what is pl
 - Timing and memory accounting captured in every `PricingResult`
 - Monte Carlo with Euler/Milstein discretisation, antithetic and control-variate reduction,
   reproducible seeding, and common-random-numbers Greeks
+- Heston stochastic volatility: semi-analytic European pricing via the "little trap"
+  characteristic function under adaptive Simpson quadrature, cross-validated against a
+  full-truncation Euler simulation of the square-root variance process, Feller violations included
 - Longstaff-Schwartz least-squares Monte Carlo for American exercise: regression of realised
   continuation cashflows on in-the-money paths, intrinsic floor at inception, agreement with
   the lattice verified for puts and dividend-paying calls
@@ -89,7 +93,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 115-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 128-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -551,7 +555,7 @@ Ordered roughly by dependency, not by ambition.
 - [x] Longstaff-Schwartz for American exercise under Monte Carlo
 
 **Models**
-- [ ] Heston stochastic volatility model
+- [x] Heston stochastic volatility model
 - [ ] Calibration tooling against market quotes
 
 **Performance**
@@ -681,6 +685,7 @@ option-converge/
 │       ├── BarrierOption.h         Barrier types, analytic + MC pricers
 │       ├── AsianOption.h           Asian types, geometric closed form + MC
 │       ├── LongstaffSchwartz.h     American exercise under Monte Carlo
+│       ├── Heston.h                Stochastic volatility model + MC
 │       ├── ImpliedVolatility.h     Implied volatility solver
 │       ├── ConvergenceAnalyzer.h   Convergence tooling
 │       └── PerformanceBenchmark.h  Benchmark and Timer
@@ -694,12 +699,13 @@ option-converge/
 │   ├── BarrierOption.cpp       Reiner-Rubinstein formulas, bridge-corrected MC
 │   ├── AsianOption.cpp         Discrete geometric closed form, CV Monte Carlo
 │   ├── LongstaffSchwartz.cpp   Regression-based backward induction on paths
+│   ├── Heston.cpp              Characteristic-function integral, Euler MC
 │   ├── ImpliedVolatility.cpp   Newton-Raphson / Brent inversion of Black-Scholes
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
 └── tests/
-    └── test_main.cpp           115-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           128-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

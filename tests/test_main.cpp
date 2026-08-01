@@ -7,6 +7,7 @@
 #include "options/BlackScholes.h"
 #include "options/ConvergenceAnalyzer.h"
 #include "options/FiniteDifference.h"
+#include "options/Heston.h"
 #include "options/ImpliedVolatility.h"
 #include "options/LongstaffSchwartz.h"
 #include "options/MonteCarlo.h"
@@ -188,6 +189,76 @@ void testMonteCarlo() {
     OptionParams american = kPut;
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
+}
+
+void testHeston() {
+    using namespace Options;
+
+    // Degeneration to Black-Scholes: with the variance pinned at sigma^2
+    // (v0 = theta = 0.04, strong mean reversion, negligible vol-of-vol) the
+    // Heston price must collapse onto the constant-volatility price.
+    {
+        HestonParams flat(0.04, 0.04, 5.0, 1e-3, 0.0);
+        HestonModel model(flat);
+        checkNear(model.price(kCall), kBsCall, 1e-4, "Heston degenerates to BS call");
+        checkNear(model.price(kPut), kBsPut, 1e-4, "Heston degenerates to BS put");
+    }
+
+    // A standard smile-generating parameter set: Feller-violating vol-of-vol
+    // and strong negative correlation, the regime equity calibrations live in.
+    HestonParams hp(0.04, 0.04, 2.0, 0.5, -0.7);
+    check(!hp.fellerSatisfied(), "test parameters deliberately violate Feller");
+    HestonModel model(hp);
+
+    const double call = model.price(kCall);
+    const double put = model.price(kPut);
+    check(call > 0.0 && put > 0.0, "Heston prices are positive");
+
+    // Parity is a genuine check here: the put uses the complementary
+    // probabilities, not parity, so agreement tests the integration.
+    checkNear(call - put, kParity, 1e-6, "Heston put-call parity");
+
+    // Two methods, one model: full truncation Euler simulation against the
+    // characteristic-function integral, with an allowance for Euler bias.
+    HestonMonteCarlo mc(hp, 100000, 200);
+    {
+        const auto est = mc.price(kCall);
+        check(est.standardError > 0.0, "Heston MC reports standard error");
+        checkNear(est.price, call, 3.0 * est.standardError + 0.03,
+                  "Heston MC call within 3 SE of semi-analytic");
+    }
+    {
+        const auto est = mc.price(kPut);
+        checkNear(est.price, put, 3.0 * est.standardError + 0.03,
+                  "Heston MC put within 3 SE of semi-analytic");
+    }
+
+    // Negative correlation fattens the left tail: OTM puts gain value over
+    // Black-Scholes at the same total variance, OTM calls lose it.
+    {
+        OptionParams otmPut(100.0, 80.0, 0.05, 0.20, 1.0, 0.0, OptionType::PUT,
+                            ExerciseType::EUROPEAN);
+        BlackScholes bs;
+        check(model.price(otmPut) > bs.price(otmPut).price,
+              "negative rho fattens OTM put vs BS");
+    }
+
+    // Same seed, same estimate.
+    HestonMonteCarlo mcA(hp, 20000, 100), mcB(hp, 20000, 100);
+    checkNear(mcA.price(kCall).price, mcB.price(kCall).price, 1e-12,
+              "same seed gives identical Heston MC price");
+
+    checkThrows([] { HestonParams(0.04, 0.04, 0.0, 0.5, -0.7); },
+                "non-positive mean reversion rejected");
+    checkThrows([] { HestonParams(0.04, 0.04, 2.0, 0.5, -1.5); },
+                "correlation outside (-1,1) rejected");
+    checkThrows(
+        [&] {
+            OptionParams american = kPut;
+            american.exerciseType = ExerciseType::AMERICAN;
+            (void)model.price(american);
+        },
+        "Heston semi-analytic rejects American");
 }
 
 void testLongstaffSchwartz() {
@@ -583,6 +654,7 @@ int main() {
     testBlackScholes();
     testBinomialTree();
     testMonteCarlo();
+    testHeston();
     testLongstaffSchwartz();
     testAsianOptions();
     testBarrierOptions();

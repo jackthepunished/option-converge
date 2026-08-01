@@ -6,6 +6,7 @@
 #include "options/BinomialTree.h"
 #include "options/BlackScholes.h"
 #include "options/Calibration.h"
+#include "options/CudaMonteCarlo.h"
 #include "options/ConvergenceAnalyzer.h"
 #include "options/FiniteDifference.h"
 #include "options/Heston.h"
@@ -118,6 +119,62 @@ void testBlackScholes() {
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)BlackScholes().price(american); },
                 "BS rejects American options");
+}
+
+void testCudaMonteCarlo() {
+    using namespace Options;
+#ifdef OPTIONS_HAS_CUDA
+    if (!CudaMonteCarlo::available()) {
+        // Built with CUDA but no device on this machine (e.g. a CI runner):
+        // the refusal is the testable behaviour.
+        checkThrows([] { (void)CudaMonteCarlo(1000, 32).price(kCall); },
+                    "CUDA MC refuses without a device");
+        return;
+    }
+
+    CudaMonteCarlo gpu(1000000, 252);
+    const auto call = gpu.price(kCall);
+    check(call.standardError > 0.0, "CUDA MC reports standard error");
+    checkNear(call.price, kBsCall, 3.0 * call.standardError,
+              "CUDA MC call within 3 SE of Black-Scholes");
+    const auto put = gpu.price(kPut);
+    checkNear(put.price, kBsPut, 3.0 * put.standardError,
+              "CUDA MC put within 3 SE of Black-Scholes");
+
+    // GPU and CPU engines are independent implementations of the same
+    // estimator; their estimates must sit within joint sampling error.
+    MonteCarlo cpu(200000, DiscretizationScheme::EULER, VarianceReduction::NONE);
+    const PricingResult cpuCall = cpu.price(kCall);
+    checkNear(call.price, cpuCall.price,
+              3.0 * (call.standardError + cpuCall.standardError),
+              "CUDA MC agrees with CPU MC");
+
+    // Same seed, same estimate, to reduction-order noise.
+    CudaMonteCarlo again(1000000, 252);
+    checkNear(again.price(kCall).price, call.price, 1e-9,
+              "same seed gives identical CUDA MC price");
+
+    checkThrows(
+        [&] {
+            OptionParams american = kPut;
+            american.exerciseType = ExerciseType::AMERICAN;
+            (void)gpu.price(american);
+        },
+        "CUDA MC rejects American options");
+    checkThrows(
+        [&] {
+            OptionParams div = kCall;
+            div.addDividend(0.5, 3.0);
+            (void)gpu.price(div);
+        },
+        "CUDA MC rejects discrete dividends");
+    checkThrows([] { CudaMonteCarlo(0, 32); }, "CUDA MC rejects zero paths");
+#else
+    // Stub build: the class links, reports unavailability, and refuses.
+    check(!CudaMonteCarlo::available(), "stub reports CUDA unavailable");
+    checkThrows([] { (void)CudaMonteCarlo(1000, 32).price(kCall); },
+                "stub refuses to price");
+#endif
 }
 
 void testDiscreteDividends() {
@@ -901,6 +958,7 @@ int main() {
     testEngineCopySemantics();
     testBinomialTree();
     testDiscreteDividends();
+    testCudaMonteCarlo();
     testMonteCarlo();
     testHeston();
     testCalibration();

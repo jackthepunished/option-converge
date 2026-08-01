@@ -34,7 +34,7 @@ a new method means implementing three functions.
 
 > [!NOTE]
 > All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 172-check test suite runs under CTest.
+> (convergence, benchmarking) are implemented and build. A 174-check test suite runs under CTest.
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -56,10 +56,11 @@ The table below reflects what is compiled into the library today, not what is pl
 | `LongstaffSchwartz` | Yes | Yes | Yes | American exercise under Monte Carlo; quadratic basis |
 | Heston model | Yes | Yes | Yes | Little-trap characteristic function + full truncation MC |
 | Calibration | Yes | Yes | Yes | Implied vol surface; Nelder-Mead Heston fit |
+| `CudaMonteCarlo` | Yes | Yes | Optional | GPU pricing when a CUDA toolchain exists; stub otherwise |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 172 checks under CTest, no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 174 checks under CTest (180 when built with CUDA), no framework dependency |
 
 ---
 
@@ -85,6 +86,10 @@ The table below reflects what is compiled into the library today, not what is pl
 - OpenMP-parallel Monte Carlo path generation over deterministically seeded chunks: the
   partition is independent of the thread count, so estimates agree across any number of
   threads (19× on 32 cores measured), and serial builds produce the same numbers
+- CUDA Monte Carlo (built automatically when a CUDA toolchain is found, honest stub
+  otherwise): one Philox stream per path keyed by path index, so estimates are independent
+  of launch geometry. Measured 2.4–3.4× over the 32-thread CPU engine at 1M–10M paths on a
+  consumer GPU — FP64 throughput, not parallelism, is the binding constraint there
 - Calibration tooling: implied volatility surfaces built from quote sets, and a
   self-contained Nelder-Mead fit of all five Heston parameters to market prices with a
   bounded parameter box and a provably non-increasing objective
@@ -106,7 +111,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 172-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 174-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -451,6 +456,7 @@ to six digits.
 | C++ compiler | C++17 | GCC 9+, Clang 10+, MSVC 19.2+ |
 | CMake | 3.15 | |
 | OpenMP | optional | Detected automatically; parallelises the Monte Carlo engine when present |
+| CUDA toolkit | optional | Detected automatically (`check_language`); enables `CudaMonteCarlo`. Pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc` for a non-standard install |
 
 ### Configure and build
 
@@ -589,7 +595,7 @@ Ordered roughly by dependency, not by ambition.
 **Performance**
 - [x] OpenMP-parallel Monte Carlo (path generation is embarrassingly parallel)
 - [x] SIMD vectorisation of lattice backward induction and payoff evaluation
-- [ ] CUDA acceleration for large path counts
+- [x] CUDA acceleration for large path counts
 - [x] Visualisation of convergence behaviour across engines
 
 ---
@@ -745,7 +751,7 @@ option-converge/
 │   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
 │                               and throughput plots (matplotlib)
 └── tests/
-    └── test_main.cpp           172-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           174-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

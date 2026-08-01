@@ -71,8 +71,34 @@ set(SOURCES
     src/PerformanceBenchmark.cpp
 )
 
+# Optional CUDA support: build the GPU Monte Carlo engine when a CUDA
+# toolchain exists, otherwise compile a stub that reports unavailability.
+# CI runners without nvcc take the stub path and stay green.
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+            set(CMAKE_CUDA_ARCHITECTURES native)
+        else()
+            set(CMAKE_CUDA_ARCHITECTURES 75)
+        endif()
+    endif()
+    list(APPEND SOURCES src/CudaMonteCarlo.cu)
+    message(STATUS "CUDA toolchain found - GPU Monte Carlo enabled")
+else()
+    list(APPEND SOURCES src/CudaMonteCarloStub.cpp)
+    message(STATUS "No CUDA toolchain - GPU Monte Carlo built as stub")
+endif()
+
 # Create library
 add_library(optionslib ${SOURCES})
+if(CMAKE_CUDA_COMPILER)
+    target_compile_definitions(optionslib PUBLIC OPTIONS_HAS_CUDA)
+endif()
 
 if(OpenMP_CXX_FOUND)
     target_link_libraries(optionslib PUBLIC OpenMP::OpenMP_CXX)

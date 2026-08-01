@@ -61,6 +61,7 @@ set(SOURCES
     src/AsianOption.cpp
     src/BarrierOption.cpp
     src/BinomialTree.cpp
+    src/Calibration.cpp
     src/FiniteDifference.cpp
     src/Heston.cpp
     src/ImpliedVolatility.cpp

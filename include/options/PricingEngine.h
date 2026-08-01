@@ -10,12 +10,6 @@ class PricingEngine {
 public:
     virtual ~PricingEngine() = default;
 
-    // Prevent copying and moving of base class
-    PricingEngine(const PricingEngine&) = delete;
-    PricingEngine(PricingEngine&&) = delete;
-    PricingEngine& operator=(const PricingEngine&) = delete;
-    PricingEngine& operator=(PricingEngine&&) = delete;
-
     // Pure virtual function for pricing
     [[nodiscard]] virtual PricingResult price(const OptionParams& params) = 0;
 
@@ -28,6 +22,16 @@ public:
 protected:
     // Default constructor for derived classes
     PricingEngine() = default;
+
+    // Copying through a base pointer or reference would slice, so the copy
+    // and move operations are protected rather than public - and defaulted
+    // rather than deleted, so that concrete engines, which are
+    // self-contained value types, can default their own copy and move.
+    // Deleting them here would silently delete the derived ones too.
+    PricingEngine(const PricingEngine&) = default;
+    PricingEngine(PricingEngine&&) = default;
+    PricingEngine& operator=(const PricingEngine&) = default;
+    PricingEngine& operator=(PricingEngine&&) = default;
 
     // Helper function for finite difference Greeks
     [[nodiscard]] double calculateDelta(const OptionParams& params, double h = 0.01);

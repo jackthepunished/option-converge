@@ -17,6 +17,7 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -117,6 +118,37 @@ void testBlackScholes() {
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)BlackScholes().price(american); },
                 "BS rejects American options");
+}
+
+void testEngineCopySemantics() {
+    using namespace Options;
+
+    // Concrete engines are value types: copies and moves must compile (they
+    // silently did not, before the base's operations became protected
+    // defaults) and must price identically to their source.
+    BlackScholes bs;
+    BlackScholes bsCopy(bs);
+    checkNear(bsCopy.price(kCall).price, kBsCall, 1e-5,
+              "copied Black-Scholes prices identically");
+
+    BinomialTree tree(500);
+    BinomialTree treeCopy(tree);
+    checkNear(treeCopy.price(kPut).price, tree.price(kPut).price, 0.0,
+              "copied lattice prices identically");
+
+    MonteCarlo mc(10000);
+    MonteCarlo mcCopy(mc);
+    checkNear(mcCopy.price(kCall).price, mc.price(kCall).price, 0.0,
+              "copied Monte Carlo prices identically");
+
+    FiniteDifference fd(100, 100);
+    FiniteDifference fdCopy = fd;
+    checkNear(fdCopy.price(kPut).price, fd.price(kPut).price, 0.0,
+              "copy-assigned finite difference prices identically");
+
+    BinomialTree treeMoved(std::move(treeCopy));
+    checkNear(treeMoved.price(kPut).price, tree.price(kPut).price, 0.0,
+              "moved lattice prices identically");
 }
 
 void testBinomialTree() {
@@ -766,6 +798,7 @@ void testPerformanceBenchmark() {
 int main() {
     testOptionParamsValidation();
     testBlackScholes();
+    testEngineCopySemantics();
     testBinomialTree();
     testMonteCarlo();
     testHeston();

@@ -1,5 +1,6 @@
 #include "options/BinomialTree.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
@@ -102,6 +103,23 @@ double BinomialTree::priceIterative(const OptionParams& params,
     }
 
     const bool american = params.isAmerican();
+    const bool bermudan = params.isBermudan();
+
+    // Bermudan contracts exercise only at the lattice levels nearest their
+    // dates; a level index of 0 would mean "now", which is not a Bermudan
+    // right, so dates snap into [1, n].
+    std::vector<char> exercisable;
+    if (bermudan) {
+        if (params.exerciseDates.empty()) {
+            throw std::invalid_argument("Bermudan contract has no exercise dates");
+        }
+        exercisable.assign(n + 1, 0);
+        for (const double t : params.exerciseDates) {
+            const auto level = static_cast<size_t>(std::llround(t / lat.dt));
+            exercisable[std::min(std::max<size_t>(level, 1), n)] = 1;
+        }
+    }
+
     if (nodeGreeks != nullptr) {
         nodeGreeks->valid = false;
         // On a two-step tree the step-2 layer IS the terminal layer, so the
@@ -128,7 +146,8 @@ double BinomialTree::priceIterative(const OptionParams& params,
 
     for (size_t step = n; step-- > 0;) {
         levelFactor *= lat.u;
-        if (american) {
+        const bool exerciseHere = american || (bermudan && exercisable[step] != 0);
+        if (exerciseHere) {
             const double f = levelFactor;
             // Cum-dividend add-back at this level's time; zero when the
             // contract carries no discrete dividends.
@@ -203,6 +222,18 @@ double BinomialTree::priceRecursive(const OptionParams& params) const {
     };
 
     const bool american = params.isAmerican();
+    const bool bermudan = params.isBermudan();
+    std::vector<char> exercisable;
+    if (bermudan) {
+        if (params.exerciseDates.empty()) {
+            throw std::invalid_argument("Bermudan contract has no exercise dates");
+        }
+        exercisable.assign(n + 1, 0);
+        for (const double t : params.exerciseDates) {
+            const auto level = static_cast<size_t>(std::llround(t / lat.dt));
+            exercisable[std::min(std::max<size_t>(level, 1), n)] = 1;
+        }
+    }
 
     // Explicit stack rather than native recursion: a 10k-step tree would
     // otherwise recurse 10k frames deep.
@@ -247,7 +278,9 @@ double BinomialTree::priceRecursive(const OptionParams& params) const {
         const double continuation =
             lat.discount * (lat.p * memo[upIdx] + (1.0 - lat.p) * memo[downIdx]);
 
-        memo[idx] = american
+        const bool exerciseHere =
+            american || (bermudan && exercisable[frame.step] != 0);
+        memo[idx] = exerciseHere
                         ? std::fmax(continuation,
                                     earlyExerciseValue(cumDividendSpotAt(frame.step, frame.up), params))
                         : continuation;

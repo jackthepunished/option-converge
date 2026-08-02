@@ -32,6 +32,14 @@ std::string FiniteDifference::getName() const {
 }
 
 PricingResult FiniteDifference::price(const OptionParams& params) {
+    // The grid applies its exercise projection either everywhere (American)
+    // or nowhere (European); date-restricted exercise belongs to the
+    // lattice and LSMC. Refuse rather than silently pricing European.
+    if (params.isBermudan()) {
+        throw std::invalid_argument(
+            "Finite difference does not price Bermudan exercise; use BinomialTree or "
+            "LongstaffSchwartz.");
+    }
     if (params.hasDiscreteDividends()) {
         // European contracts take the escrowed-dividend transformation; the
         // American grid would need a time-dependent exercise payoff, which

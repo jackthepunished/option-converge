@@ -37,7 +37,7 @@ a new method means implementing three functions.
 > Every item on the original roadmap is implemented: five pricing methods (analytic, lattice,
 > Monte Carlo, finite differences, Longstaff-Schwartz), barrier and Asian instruments, the
 > Heston model with calibration, an implied volatility solver, OpenMP and CUDA parallel paths,
-> and the analysis tools. A 206-check test suite runs under CTest (212 when built with CUDA).
+> and the analysis tools. A 220-check test suite runs under CTest (226 when built with CUDA).
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -50,7 +50,7 @@ The table below reflects what is compiled into the library today, not what is pl
 |---|:--:|:--:|:--:|---|
 | `PricingEngine` (interface) | Yes | Yes | Yes | Abstract base; finite-difference Greeks |
 | `BlackScholes` | Yes | Yes | Yes | Analytic price and Greeks, European only |
-| `BinomialTree` | Yes | Yes | Yes | CRR lattice, European and American |
+| `BinomialTree` | Yes | Yes | Yes | CRR lattice; European, American, and Bermudan |
 | `Option` (types, params) | Yes | Yes | Yes | Validated parameter struct; discrete cash dividends |
 | `MonteCarlo` | Yes | Yes | Yes | Euler/Milstein schemes; four variance-reduction modes |
 | `FiniteDifference` | Yes | Yes | Yes | Explicit/implicit/Crank-Nicolson; European and American |
@@ -58,14 +58,14 @@ The table below reflects what is compiled into the library today, not what is pl
 | Asian options | Yes | Yes | Yes | Geometric closed form; arithmetic MC with geometric CV |
 | Lookback options | Yes | Yes | Yes | GSG / Conze-Viswanathan closed forms + bridge-extreme MC |
 | Digital options | Yes | Yes | Yes | Cash/asset-or-nothing closed forms + lattice; analytic delta |
-| `LongstaffSchwartz` | Yes | Yes | Yes | American exercise under Monte Carlo; quadratic basis |
+| `LongstaffSchwartz` | Yes | Yes | Yes | American and Bermudan exercise under Monte Carlo |
 | Heston model | Yes | Yes | Yes | Little-trap characteristic function + full truncation MC |
 | Calibration | Yes | Yes | Yes | Implied vol surface; Nelder-Mead Heston fit |
 | `CudaMonteCarlo` | Yes | Yes | Optional | GPU pricing when a CUDA toolchain exists; stub otherwise |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 206 checks under CTest (212 when built with CUDA), no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 220 checks under CTest (226 when built with CUDA), no framework dependency |
 
 ---
 
@@ -107,6 +107,10 @@ The table below reflects what is compiled into the library today, not what is pl
 - Asian options with discrete arithmetic and geometric averaging: exact closed form for the
   geometric contract (the geometric mean of lognormals is lognormal), used both as a test
   reference and as a control variate that collapses the arithmetic estimator's variance
+- Bermudan exercise on the lattice and under Longstaff-Schwartz: dates registered per
+  contract, the lattice exercising only at the nearest levels, LSMC simulating exactly
+  between the dates on a non-uniform grid; degenerate date sets collapse to European and
+  American exactly, which the tests pin to 1e-12
 - Digital (binary) options, cash-or-nothing and asset-or-nothing: closed forms with analytic
   delta (including the at-the-money spike near expiry that makes digitals hard to hedge), the
   exact decomposition `vanilla = asset-or-nothing − K · cash-or-nothing` pinned by test, and a
@@ -124,7 +128,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 206-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 220-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -236,7 +240,7 @@ the test suite exercises exactly that.
 | Method | Exercise | Complexity | Deterministic | Best suited to |
 |---|---|---|:--:|---|
 | Black-Scholes | European | `O(1)` | Yes | Closed-form baseline; calibration inner loops |
-| Binomial Tree (CRR) | European, American | `O(N²)` time, `O(N)` memory | Yes | Early exercise; discrete dividends |
+| Binomial Tree (CRR) | European, American, Bermudan | `O(N²)` time, `O(N)` memory | Yes | Early exercise; discrete dividends |
 | Monte Carlo | European (extensible) | `O(paths × steps)` | Per-seed | Path dependence; high dimensionality |
 | Finite Difference | European, American | `O(M × N)` time, `O(M)` memory | Yes | PDE view; whole price surface per solve |
 
@@ -818,7 +822,7 @@ option-converge/
 │   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
 │                               and throughput plots (matplotlib)
 └── tests/
-    └── test_main.cpp           206-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           220-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

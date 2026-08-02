@@ -123,6 +123,86 @@ void testBlackScholes() {
                 "BS rejects American options");
 }
 
+void testBermudanExercise() {
+    using namespace Options;
+    BinomialTree tree(1000);
+
+    OptionParams bermudanPut = kPut;
+    bermudanPut.exerciseType = ExerciseType::BERMUDAN;
+    for (const double t : {0.25, 0.5, 0.75}) {
+        bermudanPut.addExerciseDate(t);
+    }
+    OptionParams americanPut = kPut;
+    americanPut.exerciseType = ExerciseType::AMERICAN;
+
+    // The sandwich: more exercise rights can never be worth less. A
+    // quarterly Bermudan put sits strictly between the European and
+    // American values on this contract.
+    const double euro = tree.price(kPut).price;
+    const double berm = tree.price(bermudanPut).price;
+    const double amer = tree.price(americanPut).price;
+    check(berm > euro + 0.05, "Bermudan put strictly above European");
+    check(berm < amer - 1e-6, "Bermudan put strictly below American");
+
+    // Degenerate date sets collapse to the neighbouring styles exactly:
+    // a right at every lattice level IS American; a right only at expiry
+    // IS European.
+    {
+        OptionParams dense = kPut;
+        dense.exerciseType = ExerciseType::BERMUDAN;
+        BinomialTree small(200);
+        for (int i = 1; i <= 200; ++i) {
+            dense.addExerciseDate(i * 1.0 / 200.0);
+        }
+        OptionParams am = kPut;
+        am.exerciseType = ExerciseType::AMERICAN;
+        checkNear(small.price(dense).price, small.price(am).price, 1e-12,
+                  "dates at every level equal American");
+
+        OptionParams expiryOnly = kPut;
+        expiryOnly.exerciseType = ExerciseType::BERMUDAN;
+        expiryOnly.addExerciseDate(1.0);
+        checkNear(small.price(expiryOnly).price, small.price(kPut).price, 1e-12,
+                  "expiry-only date equals European");
+    }
+
+    // The regression pricer must agree with the lattice on the same date
+    // set - discrete exercise through two unrelated treatments.
+    LongstaffSchwartz lsmc(50000, 50);
+    const auto lsmcBerm = lsmc.price(bermudanPut);
+    check(lsmcBerm.standardError > 0.0, "Bermudan LSMC reports standard error");
+    checkNear(lsmcBerm.price, berm, 3.0 * lsmcBerm.standardError + 0.05,
+              "LSMC Bermudan matches lattice Bermudan");
+
+    // And the LSMC sandwich against the analytic European reference.
+    check(lsmcBerm.price > kBsPut && lsmcBerm.price < amer + 0.05,
+          "LSMC Bermudan sits between European and American");
+
+    // Same seed, same estimate.
+    LongstaffSchwartz a(20000, 25), b2(20000, 25);
+    checkNear(a.price(bermudanPut).price, b2.price(bermudanPut).price, 1e-12,
+              "same seed gives identical Bermudan LSMC price");
+
+    // Validation and refusals.
+    checkThrows([] { OptionParams p = kPut; p.addExerciseDate(1.5); },
+                "exercise date after expiry rejected");
+    checkThrows([] { OptionParams p = kPut; p.addExerciseDate(0.0); },
+                "exercise date at inception rejected");
+    checkThrows(
+        [&] {
+            OptionParams empty = kPut;
+            empty.exerciseType = ExerciseType::BERMUDAN;
+            (void)BinomialTree(100).price(empty);
+        },
+        "dateless Bermudan rejected by lattice");
+    checkThrows([&] { (void)LongstaffSchwartz(1000, 10).price(kPut); },
+                "LSMC still rejects European");
+    checkThrows([&] { (void)FiniteDifference(100, 100).price(bermudanPut); },
+                "FD refuses Bermudan exercise");
+    checkThrows([&] { (void)BlackScholes().price(bermudanPut); },
+                "Black-Scholes refuses Bermudan exercise");
+}
+
 void testDigitalOptions() {
     using namespace Options;
     BlackScholes bs;
@@ -1125,6 +1205,7 @@ int main() {
     testEngineCopySemantics();
     testBinomialTree();
     testDiscreteDividends();
+    testBermudanExercise();
     testDigitalOptions();
     testLookbackOptions();
     testCudaMonteCarlo();

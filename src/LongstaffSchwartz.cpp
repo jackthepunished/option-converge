@@ -1,5 +1,6 @@
 #include "options/LongstaffSchwartz.h"
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <stdexcept>
@@ -72,23 +73,62 @@ LongstaffSchwartz::LongstaffSchwartz(size_t numPaths, size_t numExerciseDates, u
 }
 
 LongstaffSchwartz::Result LongstaffSchwartz::price(const OptionParams& params) const {
-    if (!params.isAmerican()) {
+    if (params.isEuropean()) {
         throw std::invalid_argument(
-            "Longstaff-Schwartz prices American exercise; use MonteCarlo for European options.");
+            "Longstaff-Schwartz prices American or Bermudan exercise; use MonteCarlo for "
+            "European options.");
     }
     if (params.hasDiscreteDividends()) {
         throw std::invalid_argument(
             "Longstaff-Schwartz does not model discrete dividends; use BinomialTree.");
     }
 
+    // The exercise-date grid. American: numDates_ uniform dates ending at
+    // expiry. Bermudan: the registered dates, sorted and deduplicated, with
+    // expiry appended - the terminal payoff is always available even when
+    // no exercise right falls on it.
+    std::vector<double> times;
+    if (params.isAmerican()) {
+        const double dt = params.timeToMaturity / static_cast<double>(numDates_);
+        times.reserve(numDates_);
+        for (size_t k = 1; k <= numDates_; ++k) {
+            times.push_back(dt * static_cast<double>(k));
+        }
+        times.back() = params.timeToMaturity;
+    } else {
+        if (params.exerciseDates.empty()) {
+            throw std::invalid_argument("Bermudan contract has no exercise dates");
+        }
+        times = params.exerciseDates;
+        std::sort(times.begin(), times.end());
+        times.erase(std::unique(times.begin(), times.end(),
+                                [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
+                    times.end());
+        if (params.timeToMaturity - times.back() > 1e-12) {
+            times.push_back(params.timeToMaturity);
+        } else {
+            times.back() = params.timeToMaturity;
+        }
+    }
     const size_t N = numPaths_;
-    const size_t M = numDates_;
-    const double dt = params.timeToMaturity / static_cast<double>(M);
-    const double drift =
-        (params.riskFreeRate - params.dividendYield - 0.5 * params.volatility * params.volatility) *
-        dt;
-    const double vol = params.volatility * std::sqrt(dt);
-    const double stepDiscount = std::exp(-params.riskFreeRate * dt);
+    const size_t M = times.size();
+
+    // GBM is simulated exactly between consecutive dates, so a sparse
+    // Bermudan grid costs nothing in accuracy - only the exercise decisions
+    // are discrete, which is the contract's own definition.
+    std::vector<double> stepDrift(M), stepVol(M), stepDisc(M);
+    {
+        const double mu =
+            params.riskFreeRate - params.dividendYield - 0.5 * params.volatility * params.volatility;
+        double prev = 0.0;
+        for (size_t k = 0; k < M; ++k) {
+            const double dt = times[k] - prev;
+            stepDrift[k] = mu * dt;
+            stepVol[k] = params.volatility * std::sqrt(dt);
+            stepDisc[k] = std::exp(-params.riskFreeRate * dt);
+            prev = times[k];
+        }
+    }
 
     // All exercise-date spots are needed for the backward pass, so the full
     // N x M matrix is stored: at 8 bytes a node this is the price of seeing
@@ -100,7 +140,7 @@ LongstaffSchwartz::Result LongstaffSchwartz::price(const OptionParams& params) c
         for (size_t p = 0; p < N; ++p) {
             double logS = std::log(params.spotPrice);
             for (size_t k = 0; k < M; ++k) {
-                logS += drift + vol * normal(rng);
+                logS += stepDrift[k] + stepVol[k] * normal(rng);
                 spots[p * M + k] = std::exp(logS);
             }
         }
@@ -120,10 +160,11 @@ LongstaffSchwartz::Result LongstaffSchwartz::price(const OptionParams& params) c
     regY.reserve(N);
 
     for (size_t k = M - 1; k-- > 0;) {
-        // Values seen from date k: everything downstream shrinks by one step
-        // of discounting, whether or not exercise happens later on the path.
+        // Values seen from date k: everything downstream shrinks by the
+        // discount over (times[k], times[k+1]], whether or not exercise
+        // happens later on the path.
         for (size_t p = 0; p < N; ++p) {
-            cashflow[p] *= stepDiscount;
+            cashflow[p] *= stepDisc[k + 1];
         }
 
         itmIndex.clear();
@@ -156,7 +197,7 @@ LongstaffSchwartz::Result LongstaffSchwartz::price(const OptionParams& params) c
 
     double sum = 0.0, sumSq = 0.0;
     for (size_t p = 0; p < N; ++p) {
-        const double value = cashflow[p] * stepDiscount;  // Discount date 1 back to today
+        const double value = cashflow[p] * stepDisc[0];  // Discount the first date back to today
         sum += value;
         sumSq += value * value;
     }
@@ -164,10 +205,12 @@ LongstaffSchwartz::Result LongstaffSchwartz::price(const OptionParams& params) c
     const double mean = sum / n;
     const double variance = std::fmax(sumSq / n - mean * mean, 0.0);
 
-    // The holder may also exercise immediately, which the date grid
-    // (starting at dt) cannot represent; the payoff today floors the price.
-    return {std::fmax(mean, intrinsic(params.spotPrice, params)),
-            std::sqrt(variance / n)};
+    // An American holder may also exercise immediately, which the date grid
+    // (starting after 0) cannot represent, so the payoff today floors the
+    // price. A Bermudan holder has no such right between dates.
+    const double floorValue =
+        params.isAmerican() ? intrinsic(params.spotPrice, params) : 0.0;
+    return {std::fmax(mean, floorValue), std::sqrt(variance / n)};
 }
 
 } // namespace Options

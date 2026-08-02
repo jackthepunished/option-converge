@@ -14,10 +14,13 @@ enum class OptionType {
     PUT
 };
 
-// Enumeration for exercise styles
+// Enumeration for exercise styles. Bermudan sits between the other two:
+// exercise is allowed only on a discrete set of dates, registered via
+// OptionParams::addExerciseDate.
 enum class ExerciseType {
     EUROPEAN,
-    AMERICAN
+    AMERICAN,
+    BERMUDAN
 };
 
 // A discrete cash dividend: a known amount paid at a known future time.
@@ -38,6 +41,7 @@ struct OptionParams {
     OptionType optionType;      // Call or Put
     ExerciseType exerciseType;  // European or American
     std::vector<Dividend> discreteDividends;  // Cash dividends; empty by default
+    std::vector<double> exerciseDates;        // Bermudan exercise dates; empty otherwise
 
     // Constructor with defaults
     OptionParams(double S = 100.0, double K = 100.0, double r = 0.05,
@@ -74,6 +78,16 @@ struct OptionParams {
         return !discreteDividends.empty();
     }
 
+    // Register a Bermudan exercise date, validated into (0, T]. Exercise at
+    // expiry itself is always available through the terminal payoff, so a
+    // date equal to T is legal but redundant.
+    void addExerciseDate(double time) {
+        if (time <= 0.0 || time > timeToMaturity) {
+            throw std::invalid_argument("Exercise date must lie inside (0, maturity]");
+        }
+        exerciseDates.push_back(time);
+    }
+
     // Present value, discounted at the risk-free rate, of all dividends paid
     // after valuation time t (t = 0 gives the full escrowed adjustment).
     [[nodiscard]] double dividendPVAfter(double t) const noexcept {
@@ -102,6 +116,7 @@ struct OptionParams {
     [[nodiscard]] constexpr bool isPut() const noexcept { return optionType == OptionType::PUT; }
     [[nodiscard]] constexpr bool isEuropean() const noexcept { return exerciseType == ExerciseType::EUROPEAN; }
     [[nodiscard]] constexpr bool isAmerican() const noexcept { return exerciseType == ExerciseType::AMERICAN; }
+    [[nodiscard]] constexpr bool isBermudan() const noexcept { return exerciseType == ExerciseType::BERMUDAN; }
 
     [[nodiscard]] std::string toString() const;
 };

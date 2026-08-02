@@ -77,6 +77,7 @@ set(SOURCES
     src/Heston.cpp
     src/ImpliedVolatility.cpp
     src/LongstaffSchwartz.cpp
+    src/LookbackOption.cpp
     src/MonteCarlo.cpp
     src/ConvergenceAnalyzer.cpp
     src/PerformanceBenchmark.cpp

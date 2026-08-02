@@ -12,6 +12,7 @@
 #include "options/Heston.h"
 #include "options/ImpliedVolatility.h"
 #include "options/LongstaffSchwartz.h"
+#include "options/LookbackOption.h"
 #include "options/MonteCarlo.h"
 #include "options/PerformanceBenchmark.h"
 
@@ -119,6 +120,84 @@ void testBlackScholes() {
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)BlackScholes().price(american); },
                 "BS rejects American options");
+}
+
+void testLookbackOptions() {
+    using namespace Options;
+
+    // Pathwise dominance: the realised max dominates the terminal price, so
+    // a fixed-strike lookback call is worth strictly more than the vanilla
+    // call at the same strike; similarly the floating-strike call, whose
+    // strike (the realised min) can only undercut the vanilla's.
+    LookbackParams fixedCall(kCall, LookbackType::FIXED_STRIKE);
+    LookbackParams floatCall(kCall, LookbackType::FLOATING_STRIKE);
+    LookbackParams fixedPut(kPut, LookbackType::FIXED_STRIKE);
+    LookbackParams floatPut(kPut, LookbackType::FLOATING_STRIKE);
+    const double fixedCallPx = AnalyticLookback::price(fixedCall);
+    const double floatCallPx = AnalyticLookback::price(floatCall);
+    check(fixedCallPx > kBsCall + 0.5, "fixed lookback call dominates vanilla");
+    check(floatCallPx > kBsCall + 0.5, "floating lookback call dominates vanilla");
+    check(AnalyticLookback::price(fixedPut) > kBsPut + 0.5,
+          "fixed lookback put dominates vanilla");
+    check(AnalyticLookback::price(floatPut) > kBsPut + 0.5,
+          "floating lookback put dominates vanilla");
+
+    // Lookbacks are long volatility everywhere, not just at the money.
+    {
+        OptionParams highVol = kCall;
+        highVol.volatility = 0.30;
+        LookbackParams highVolCall(highVol, LookbackType::FLOATING_STRIKE);
+        check(AnalyticLookback::price(highVolCall) > floatCallPx,
+              "lookback value increases with volatility");
+    }
+
+    // Two methods, one price: bridge-corrected simulation against the
+    // continuously monitored closed forms, for all four contract types.
+    LookbackMonteCarlo mc(100000, 64);
+    const struct {
+        const LookbackParams* p;
+        double analytic;
+        const char* label;
+    } cases[] = {
+        {&fixedCall, fixedCallPx, "MC fixed lookback call vs analytic"},
+        {&floatCall, floatCallPx, "MC floating lookback call vs analytic"},
+        {&fixedPut, AnalyticLookback::price(fixedPut), "MC fixed lookback put vs analytic"},
+        {&floatPut, AnalyticLookback::price(floatPut), "MC floating lookback put vs analytic"},
+    };
+    for (const auto& c : cases) {
+        const auto est = mc.price(*c.p);
+        check(est.standardError > 0.0,
+              std::string("lookback MC reports SE (") + c.label + ")");
+        checkNear(est.price, c.analytic, 3.0 * est.standardError + 0.03, c.label);
+    }
+
+    // Same seed, same estimate.
+    LookbackMonteCarlo a(20000, 32), b2(20000, 32);
+    checkNear(a.price(floatCall).price, b2.price(floatCall).price, 1e-12,
+              "same seed gives identical lookback MC price");
+
+    // Refusals: exercise style, dividends, and the r == q singular limit.
+    checkThrows(
+        [] {
+            OptionParams american = kCall;
+            american.exerciseType = ExerciseType::AMERICAN;
+            LookbackParams(american, LookbackType::FIXED_STRIKE);
+        },
+        "American lookback rejected");
+    checkThrows(
+        [] {
+            OptionParams div = kCall;
+            div.addDividend(0.5, 3.0);
+            LookbackParams(div, LookbackType::FIXED_STRIKE);
+        },
+        "dividend-paying lookback rejected");
+    checkThrows(
+        [] {
+            OptionParams flat(100.0, 100.0, 0.05, 0.20, 1.0, 0.05, OptionType::CALL,
+                              ExerciseType::EUROPEAN);
+            (void)AnalyticLookback::price(LookbackParams(flat, LookbackType::FLOATING_STRIKE));
+        },
+        "r == q closed-form limit refused");
 }
 
 void testCudaMonteCarlo() {
@@ -958,6 +1037,7 @@ int main() {
     testEngineCopySemantics();
     testBinomialTree();
     testDiscreteDividends();
+    testLookbackOptions();
     testCudaMonteCarlo();
     testMonteCarlo();
     testHeston();

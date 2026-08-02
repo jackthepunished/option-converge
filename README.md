@@ -37,7 +37,7 @@ a new method means implementing three functions.
 > Every item on the original roadmap is implemented: five pricing methods (analytic, lattice,
 > Monte Carlo, finite differences, Longstaff-Schwartz), barrier and Asian instruments, the
 > Heston model with calibration, an implied volatility solver, OpenMP and CUDA parallel paths,
-> and the analysis tools. A 220-check test suite runs under CTest (226 when built with CUDA).
+> and the analysis tools. A 231-check test suite runs under CTest (237 when built with CUDA).
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -59,13 +59,13 @@ The table below reflects what is compiled into the library today, not what is pl
 | Lookback options | Yes | Yes | Yes | GSG / Conze-Viswanathan closed forms + bridge-extreme MC |
 | Digital options | Yes | Yes | Yes | Cash/asset-or-nothing closed forms + lattice; analytic delta |
 | `LongstaffSchwartz` | Yes | Yes | Yes | American and Bermudan exercise under Monte Carlo |
-| Heston model | Yes | Yes | Yes | Little-trap characteristic function + full truncation MC |
+| Heston model | Yes | Yes | Yes | Little-trap characteristic function + MC; American via LSMC |
 | Calibration | Yes | Yes | Yes | Implied vol surface; Nelder-Mead Heston fit |
 | `CudaMonteCarlo` | Yes | Yes | Optional | GPU pricing when a CUDA toolchain exists; stub otherwise |
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 220 checks under CTest (226 when built with CUDA), no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 231 checks under CTest (237 when built with CUDA), no framework dependency |
 
 ---
 
@@ -101,6 +101,9 @@ The table below reflects what is compiled into the library today, not what is pl
 - Heston stochastic volatility: semi-analytic European pricing via the "little trap"
   characteristic function under adaptive Simpson quadrature, cross-validated against a
   full-truncation Euler simulation of the square-root variance process, Feller violations included
+- American exercise under Heston by least-squares Monte Carlo over (S, v) paths: the
+  regression basis {1, x, x², v, vx} sees the variance state the continuation value depends
+  on; pinned-variance degeneration to the GBM pricer and the lattice anchors correctness
 - Longstaff-Schwartz least-squares Monte Carlo for American exercise: regression of realised
   continuation cashflows on in-the-money paths, intrinsic floor at inception, agreement with
   the lattice verified for puts and dividend-paying calls
@@ -128,7 +131,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 220-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 231-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -822,7 +825,7 @@ option-converge/
 │   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
 │                               and throughput plots (matplotlib)
 └── tests/
-    └── test_main.cpp           220-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           231-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

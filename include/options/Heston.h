@@ -84,6 +84,34 @@ private:
     unsigned seed_;
 };
 
+// American exercise under Heston dynamics by least-squares Monte Carlo.
+// The GBM Longstaff-Schwartz machinery carries over with one essential
+// change: the continuation value depends on the variance state as well as
+// the spot, so the regression basis is {1, x, x^2, v, v x} with x = S/K -
+// a put's continuation value at the same spot is worth more when volatility
+// is high, and a basis blind to v cannot see that.
+class HestonLongstaffSchwartz {
+public:
+    struct Result {
+        double price;
+        double standardError;
+    };
+
+    HestonLongstaffSchwartz(const HestonParams& params, size_t numPaths = 50000,
+                            size_t numSteps = 100, unsigned seed = 42);
+
+    // Price an American option; exercise is considered at every Euler step.
+    // Throws for European contracts (use HestonModel / HestonMonteCarlo)
+    // and for discrete dividends.
+    [[nodiscard]] Result price(const OptionParams& option) const;
+
+private:
+    HestonParams params_;
+    size_t numPaths_;
+    size_t numSteps_;
+    unsigned seed_;
+};
+
 } // namespace Options
 
 #endif // HESTON_H

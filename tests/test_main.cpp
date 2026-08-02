@@ -657,6 +657,70 @@ void testMonteCarlo() {
     checkThrows([&] { (void)mc.price(american); }, "MC rejects American options");
 }
 
+void testHestonAmerican() {
+    using namespace Options;
+
+    OptionParams americanPut = kPut;
+    americanPut.exerciseType = ExerciseType::AMERICAN;
+
+    // Degeneration anchor: with the variance pinned at sigma^2 the Heston
+    // LSMC must reproduce the GBM LSMC American put - same algorithm, same
+    // contract, dynamics collapsed onto each other.
+    {
+        HestonParams flat(0.04, 0.04, 5.0, 1e-3, 0.0);
+        LongstaffSchwartz gbmLsmc(30000, 100);
+        HestonLongstaffSchwartz flatLsmc(flat, 30000, 100);
+        const auto hestonEst = flatLsmc.price(americanPut);
+        const auto gbmEst = gbmLsmc.price(americanPut);
+        check(hestonEst.standardError > 0.0, "Heston LSMC reports standard error");
+        checkNear(hestonEst.price, gbmEst.price,
+                  3.0 * (hestonEst.standardError + gbmEst.standardError) + 0.05,
+                  "pinned-variance Heston LSMC matches GBM LSMC");
+        // And through the lattice, a third treatment of the same limit.
+        checkNear(hestonEst.price, BinomialTree(1000).price(americanPut).price,
+                  3.0 * hestonEst.standardError + 0.08,
+                  "pinned-variance Heston LSMC matches lattice");
+    }
+
+    // The smile regime: Feller-violating vol-of-vol, negative correlation.
+    HestonParams hp(0.04, 0.04, 2.0, 0.5, -0.7);
+    HestonLongstaffSchwartz lsmc(hp, 30000, 100);
+    const HestonModel model(hp);
+    const auto amEst = lsmc.price(americanPut);
+    const double euro = model.price(kPut);
+
+    // The early-exercise premium must be there, and sane.
+    check(amEst.price > euro + 0.1,
+          "Heston American put carries early-exercise premium");
+    check(amEst.price < euro + 2.0, "Heston American premium is plausible");
+
+    // Deep in the money the intrinsic floor binds exactly.
+    {
+        OptionParams deepPut(50.0, 100.0, 0.05, 0.20, 1.0, 0.0, OptionType::PUT,
+                             ExerciseType::AMERICAN);
+        check(lsmc.price(deepPut).price >= 50.0 - 1e-12,
+              "Heston LSMC deep ITM put >= intrinsic");
+    }
+
+    // Same seed, same estimate.
+    HestonLongstaffSchwartz a(hp, 15000, 50), b2(hp, 15000, 50);
+    checkNear(a.price(americanPut).price, b2.price(americanPut).price, 1e-12,
+              "same seed gives identical Heston LSMC price");
+
+    checkThrows([&] { (void)lsmc.price(kPut); }, "Heston LSMC rejects European");
+    checkThrows(
+        [&] {
+            OptionParams div = americanPut;
+            div.addDividend(0.5, 3.0);
+            (void)lsmc.price(div);
+        },
+        "Heston LSMC rejects discrete dividends");
+    checkThrows([&] { HestonLongstaffSchwartz(hp, 1, 50); },
+                "degenerate path count rejected");
+    checkThrows([&] { HestonLongstaffSchwartz(hp, 1000, 0); },
+                "zero steps rejected");
+}
+
 void testCalibration() {
     using namespace Options;
     BlackScholes bs;
@@ -1211,6 +1275,7 @@ int main() {
     testCudaMonteCarlo();
     testMonteCarlo();
     testHeston();
+    testHestonAmerican();
     testCalibration();
     testLongstaffSchwartz();
     testAsianOptions();

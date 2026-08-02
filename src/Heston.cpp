@@ -4,6 +4,7 @@
 #include <complex>
 #include <random>
 #include <stdexcept>
+#include <vector>
 
 namespace Options {
 
@@ -153,6 +154,181 @@ HestonMonteCarlo::Result HestonMonteCarlo::price(const OptionParams& option) con
     const double mean = sum / n;
     const double variance = std::fmax(sumSq / n - mean * mean, 0.0);
     return {mean, std::sqrt(variance / n)};
+}
+
+namespace {
+
+// Least-squares fit of y on the five-function basis {1, x, x^2, v, v x} via
+// the normal equations, Gaussian elimination with partial pivoting. Returns
+// false when the system is numerically singular, in which case the caller
+// skips the exercise decision at that date.
+bool hestonBasisFit(const std::vector<double>& x, const std::vector<double>& v,
+                    const std::vector<double>& y, double coeff[5]) {
+    constexpr int kDim = 5;
+    double xtx[kDim][kDim] = {};
+    double xty[kDim] = {};
+    const size_t n = x.size();
+    for (size_t i = 0; i < n; ++i) {
+        const double basis[kDim] = {1.0, x[i], x[i] * x[i], v[i], v[i] * x[i]};
+        for (int a = 0; a < kDim; ++a) {
+            for (int b = a; b < kDim; ++b) {
+                xtx[a][b] += basis[a] * basis[b];
+            }
+            xty[a] += basis[a] * y[i];
+        }
+    }
+    for (int a = 1; a < kDim; ++a) {
+        for (int b = 0; b < a; ++b) {
+            xtx[a][b] = xtx[b][a];
+        }
+    }
+
+    double aug[kDim][kDim + 1];
+    for (int a = 0; a < kDim; ++a) {
+        for (int b = 0; b < kDim; ++b) aug[a][b] = xtx[a][b];
+        aug[a][kDim] = xty[a];
+    }
+    for (int col = 0; col < kDim; ++col) {
+        int pivot = col;
+        for (int row = col + 1; row < kDim; ++row) {
+            if (std::fabs(aug[row][col]) > std::fabs(aug[pivot][col])) pivot = row;
+        }
+        if (std::fabs(aug[pivot][col]) < 1e-12) return false;
+        if (pivot != col) {
+            for (int k = col; k <= kDim; ++k) std::swap(aug[col][k], aug[pivot][k]);
+        }
+        for (int row = col + 1; row < kDim; ++row) {
+            const double factor = aug[row][col] / aug[col][col];
+            for (int k = col; k <= kDim; ++k) aug[row][k] -= factor * aug[col][k];
+        }
+    }
+    for (int row = kDim - 1; row >= 0; --row) {
+        double sum = aug[row][kDim];
+        for (int k = row + 1; k < kDim; ++k) sum -= aug[row][k] * coeff[k];
+        coeff[row] = sum / aug[row][row];
+    }
+    return true;
+}
+
+double intrinsicValue(double spot, const OptionParams& o) noexcept {
+    return o.isCall() ? std::fmax(spot - o.strikePrice, 0.0)
+                      : std::fmax(o.strikePrice - spot, 0.0);
+}
+
+} // namespace
+
+HestonLongstaffSchwartz::HestonLongstaffSchwartz(const HestonParams& params, size_t numPaths,
+                                                 size_t numSteps, unsigned seed)
+    : params_(params), numPaths_(numPaths), numSteps_(numSteps), seed_(seed) {
+    if (numPaths_ < 2) throw std::invalid_argument("Heston LSMC needs at least two paths");
+    if (numSteps_ == 0) throw std::invalid_argument("Heston LSMC needs at least one step");
+}
+
+HestonLongstaffSchwartz::Result HestonLongstaffSchwartz::price(const OptionParams& option) const {
+    if (!option.isAmerican()) {
+        throw std::invalid_argument(
+            "Heston LSMC prices American exercise; use HestonModel or HestonMonteCarlo for "
+            "European options.");
+    }
+    if (option.hasDiscreteDividends()) {
+        throw std::invalid_argument("Heston LSMC does not model discrete dividends.");
+    }
+
+    const size_t N = numPaths_;
+    const size_t M = numSteps_;
+    const double dt = option.timeToMaturity / static_cast<double>(M);
+    const double sqrtDt = std::sqrt(dt);
+    const double rho = params_.rho;
+    const double rhoBar = std::sqrt(1.0 - rho * rho);
+    const double driftBase = (option.riskFreeRate - option.dividendYield) * dt;
+    const double stepDiscount = std::exp(-option.riskFreeRate * dt);
+
+    // Both state variables are needed at every exercise date: the spot for
+    // the payoff and the variance for the regression basis. Full truncation
+    // Euler, as in the European Heston Monte Carlo.
+    std::vector<double> spots(N * M);
+    std::vector<double> variances(N * M);
+    {
+        std::mt19937_64 rng(seed_);
+        std::normal_distribution<double> normal(0.0, 1.0);
+        for (size_t p = 0; p < N; ++p) {
+            double logS = std::log(option.spotPrice);
+            double v = params_.v0;
+            for (size_t k = 0; k < M; ++k) {
+                const double vPlus = std::fmax(v, 0.0);
+                const double zV = normal(rng);
+                const double zS = rho * zV + rhoBar * normal(rng);
+                logS += driftBase - 0.5 * vPlus * dt + std::sqrt(vPlus) * sqrtDt * zS;
+                v += params_.kappa * (params_.theta - vPlus) * dt +
+                     params_.xi * std::sqrt(vPlus) * sqrtDt * zV;
+                spots[p * M + k] = std::exp(logS);
+                variances[p * M + k] = std::fmax(v, 0.0);
+            }
+        }
+    }
+
+    std::vector<double> cashflow(N);
+    for (size_t p = 0; p < N; ++p) {
+        cashflow[p] = intrinsicValue(spots[p * M + (M - 1)], option);
+    }
+
+    std::vector<size_t> itmIndex;
+    std::vector<double> regX, regV, regY;
+    itmIndex.reserve(N);
+    regX.reserve(N);
+    regV.reserve(N);
+    regY.reserve(N);
+
+    for (size_t k = M - 1; k-- > 0;) {
+        for (size_t p = 0; p < N; ++p) {
+            cashflow[p] *= stepDiscount;
+        }
+
+        itmIndex.clear();
+        regX.clear();
+        regV.clear();
+        regY.clear();
+        for (size_t p = 0; p < N; ++p) {
+            const double exerciseValue = intrinsicValue(spots[p * M + k], option);
+            if (exerciseValue > 0.0) {
+                itmIndex.push_back(p);
+                regX.push_back(spots[p * M + k] / option.strikePrice);
+                regV.push_back(variances[p * M + k]);
+                regY.push_back(cashflow[p]);
+            }
+        }
+        // Five basis functions need comfortably more support than three.
+        if (itmIndex.size() < 25) continue;
+
+        double coeff[5];
+        if (!hestonBasisFit(regX, regV, regY, coeff)) continue;
+
+        for (size_t i = 0; i < itmIndex.size(); ++i) {
+            const size_t p = itmIndex[i];
+            const double x = regX[i];
+            const double v = regV[i];
+            const double continuation =
+                coeff[0] + coeff[1] * x + coeff[2] * x * x + coeff[3] * v + coeff[4] * v * x;
+            const double exerciseValue = intrinsicValue(spots[p * M + k], option);
+            if (exerciseValue >= continuation) {
+                cashflow[p] = exerciseValue;
+            }
+        }
+    }
+
+    double sum = 0.0, sumSq = 0.0;
+    for (size_t p = 0; p < N; ++p) {
+        const double value = cashflow[p] * stepDiscount;
+        sum += value;
+        sumSq += value * value;
+    }
+    const double n = static_cast<double>(N);
+    const double mean = sum / n;
+    const double variance = std::fmax(sumSq / n - mean * mean, 0.0);
+
+    // Immediate exercise floors the American price, as in the GBM pricer.
+    return {std::fmax(mean, intrinsicValue(option.spotPrice, option)),
+            std::sqrt(variance / n)};
 }
 
 } // namespace Options

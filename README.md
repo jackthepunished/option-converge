@@ -4,7 +4,8 @@
 [![CI](https://github.com/jackthepunished/option-converge/actions/workflows/ci.yml/badge.svg)](https://github.com/jackthepunished/option-converge/actions/workflows/ci.yml)
 [![Build](https://img.shields.io/badge/build-CMake%20%E2%89%A5%203.15-064F8C.svg)](https://cmake.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#build-instructions)
-[![Status](https://img.shields.io/badge/status-core%20complete-brightgreen.svg)](#current-status)
+[![Status](https://img.shields.io/badge/status-roadmap%20complete-brightgreen.svg)](#current-status)
+[![Release](https://img.shields.io/github/v/release/jackthepunished/option-converge)](https://github.com/jackthepunished/option-converge/releases)
 
 A C++ option pricing engine built around a single abstract `PricingEngine` interface, so that
 analytic, lattice, and simulation methods can be swapped, cross-checked, and compared against one
@@ -33,8 +34,10 @@ self-evident, memory layouts are chosen deliberately, and the interface is narro
 a new method means implementing three functions.
 
 > [!NOTE]
-> All three engines (Black-Scholes, binomial lattice, Monte Carlo) and both analysis tools
-> (convergence, benchmarking) are implemented and build. A 174-check test suite runs under CTest.
+> Every item on the original roadmap is implemented: five pricing methods (analytic, lattice,
+> Monte Carlo, finite differences, Longstaff-Schwartz), barrier and Asian instruments, the
+> Heston model with calibration, an implied volatility solver, OpenMP and CUDA parallel paths,
+> and the analysis tools. A 174-check test suite runs under CTest (180 when built with CUDA).
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -156,10 +159,24 @@ classDiagram
         +price(OptionParams) PricingResult
     }
 
+    class FiniteDifference {
+        -spotSteps_ size_t
+        -timeSteps_ size_t
+        -scheme_ FDScheme
+        +price(OptionParams) PricingResult
+    }
+
     PricingEngine <|-- BlackScholes
     PricingEngine <|-- BinomialTree
     PricingEngine <|-- MonteCarlo
+    PricingEngine <|-- FiniteDifference
 ```
+
+Alongside the `PricingEngine` hierarchy sit the standalone pricers and tools — `LongstaffSchwartz`
+(American exercise under simulation), the barrier and Asian pricers (typed wrappers around
+`OptionParams`), `HestonModel` and `HestonMonteCarlo`, `CudaMonteCarlo`, `ImpliedVolatility`, and
+the calibration tooling — which share the parameter types but not the base class, because their
+inputs (barriers, fixings, variance dynamics, quotes) do not fit the vanilla interface.
 
 ### Why a common interface
 
@@ -457,7 +474,19 @@ python3 scripts/plot_convergence.py        # needs matplotlib
 
 renders log-log convergence curves with `O(1/N)` and `O(1/√N)` slope guides, a cost-accuracy
 frontier (error against compute time — the honest comparison), and a throughput chart, from the
-CSVs in `results/`, into `results/plots/`. The American put is worth `0.5167` more than its European counterpart at 5000 steps —
+CSVs in `results/`, into `results/plots/`. The two that matter, generated from the current code:
+
+![Convergence to the analytic reference](docs/convergence.png)
+
+The lattice error rides the `O(1/N)` guide exactly; Monte Carlo tracks `O(1/√N)`. The same data
+against compute time instead of iteration count:
+
+![Cost-accuracy frontier](docs/cost_accuracy.png)
+
+The lattice dominates this contract — for a European vanilla it reaches any target accuracy
+orders of magnitude cheaper. That is the fair reading *and* the misleading one: Monte Carlo's
+cost is independent of dimension and payoff structure, which is why it survives everywhere the
+lattice cannot go. The American put is worth `0.5167` more than its European counterpart at 5000 steps —
 the early-exercise premium, which exists because a deep in-the-money put earns interest on the strike
 if exercised early, and which no closed form captures.
 
@@ -768,6 +797,9 @@ option-converge/
 │   ├── ConvergenceAnalyzer.cpp Step/path sweeps, RMSE, CSV export
 │   ├── PerformanceBenchmark.cpp Timing statistics with adaptive batching
 │   └── main.cpp                Demo driver: pricing, convergence sweep, benchmark
+├── docs/
+│   ├── convergence.png         Rendered convergence plot embedded above
+│   └── cost_accuracy.png       Rendered cost-accuracy frontier embedded above
 ├── scripts/
 │   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
 │                               and throughput plots (matplotlib)

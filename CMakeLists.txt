@@ -8,11 +8,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Warnings always; optimization flags only in Release so Debug builds stay
 # debuggable and do not collide with MSVC's /RTC1 runtime checks.
+# Fast-math relaxes IEEE semantics (reassociation, no NaN/inf assumptions).
+# Overridable so the numerical impact can be measured against strict FP;
+# see the README's Performance section for the measured trade-off.
+option(OPTIONS_FAST_MATH "Enable -ffast-math / /fp:fast in Release builds" ON)
+
 if(MSVC)
     add_compile_options(
         /W4                    # Warning level 4
-        "$<$<CONFIG:Release>:/O2;/Oi;/Ot;/GL;/fp:fast;/arch:AVX2>"
+        "$<$<CONFIG:Release>:/O2;/Oi;/Ot;/GL;/arch:AVX2>"
     )
+    if(OPTIONS_FAST_MATH)
+        add_compile_options("$<$<CONFIG:Release>:/fp:fast>")
+    endif()
     # /LTCG pairs with /GL, so Release only
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
     set(CMAKE_STATIC_LINKER_FLAGS_RELEASE "${CMAKE_STATIC_LINKER_FLAGS_RELEASE} /LTCG")
@@ -21,8 +29,11 @@ else()
         -Wall                  # Enable all warnings
         -Wextra                # Extra warnings
         -Wpedantic             # Pedantic warnings
-        "$<$<CONFIG:Release>:-O3;-ffast-math;-funroll-loops;-finline-functions>"
+        "$<$<CONFIG:Release>:-O3;-funroll-loops;-finline-functions>"
     )
+    if(OPTIONS_FAST_MATH)
+        add_compile_options("$<$<CONFIG:Release>:-ffast-math>")
+    endif()
     # Not every compiler accepts -march=native (e.g. older Apple Clang on arm64)
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)

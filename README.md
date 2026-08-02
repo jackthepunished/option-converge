@@ -405,12 +405,31 @@ Present state of the tooling:
 - The build enables aggressive optimisation by default: `-O3 -march=native -flto -ffast-math` on
   GCC/Clang, and `/O2 /GL /arch:AVX2 /fp:fast` on MSVC.
 
-> [!CAUTION]
-> `-ffast-math` and `/fp:fast` permit the compiler to reorder floating-point operations and to assume
-> no NaNs or infinities. In a numerical pricing library this is a real trade-off: it can change
-> results in the last bits, and it interacts badly with catastrophic cancellation, which is exactly
-> what second-order finite-difference Greeks depend on. It is worth benchmarking whether these flags
-> buy anything here before keeping them.
+> [!NOTE]
+> `-ffast-math` and `/fp:fast` permit the compiler to reorder floating-point operations and to
+> assume no NaNs or infinities. An earlier revision of this README asked whether the flags buy
+> anything here; that question is now answered by measurement (GCC 13, `-O3 -march=native`,
+> same machine, best of 3):
+>
+> | Benchmark | fast-math | strict IEEE | strict cost |
+> |---|---:|---:|---:|
+> | Black-Scholes single pricing | 65 ns | 73 ns | 1.1× |
+> | CRR 1000, European | 41.5 µs | 42.1 µs | ~1× |
+> | **CRR 5000, American** | **1.74 ms** | **48.6 ms** | **28×** |
+> | Crank-Nicolson 200×200, American | 0.19 ms | 0.33 ms | 1.8× |
+> | Monte Carlo 200k paths (both VR) | 25.4 ms | 32.5 ms | 1.3× |
+> | Heston semi-analytic | 0.31 ms | 0.34 ms | 1.1× |
+>
+> The load-bearing component is `-ffinite-math-only`: under strict IEEE NaN-propagation rules
+> `std::fmax` cannot be vectorized, and the American induction loop's SIMD win evaporates —
+> building with just `-ffinite-math-only -fno-math-errno` recovers 1.86 ms of the 1.74 ms.
+> Meanwhile every reference price agrees between the two builds to within 1–3 ulps, and the
+> full test suite passes under fast-math, strict, and finite-math-only builds alike. The
+> earlier worry about second-order finite-difference Greeks no longer applies: lattice Gamma
+> comes from tree nodes, not from bump cancellation.
+>
+> The flags therefore stay on by default, and the choice is yours to override:
+> `cmake -DOPTIONS_FAST_MATH=OFF` builds with strict IEEE semantics.
 
 ### Convergence
 
@@ -610,8 +629,10 @@ that has none.
    and Gamma from its own tree nodes (fixed; regression tested against the analytic values).
    A tree shallower than two steps cannot supply node Greeks and falls back to finite
    differences, noise and all.
-2. **`-ffast-math` is enabled by default**, with the caveats described under
-   [Performance](#performance).
+2. **`-ffast-math` is enabled by default, now by measurement rather than inheritance** — it is
+   worth 28× on the American lattice (vectorizable `fmax`) and costs at most a few ulps on any
+   reference price; the numbers are under [Performance](#performance). Build with
+   `-DOPTIONS_FAST_MATH=OFF` for strict IEEE semantics at that documented cost.
 3. **Discrete dividends use the escrowed model** (fixed; the vestigial `DividendType` enum is
    gone). Cash dividends registered via `OptionParams::addDividend` are priced by diffusing the
    dividend-stripped spot; the lattice adds the PV of unpaid dividends back at each node for

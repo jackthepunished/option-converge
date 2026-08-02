@@ -37,7 +37,7 @@ a new method means implementing three functions.
 > Every item on the original roadmap is implemented: five pricing methods (analytic, lattice,
 > Monte Carlo, finite differences, Longstaff-Schwartz), barrier and Asian instruments, the
 > Heston model with calibration, an implied volatility solver, OpenMP and CUDA parallel paths,
-> and the analysis tools. A 191-check test suite runs under CTest (197 when built with CUDA).
+> and the analysis tools. A 206-check test suite runs under CTest (212 when built with CUDA).
 > See [Current Status](#current-status) for the breakdown.
 
 ---
@@ -57,6 +57,7 @@ The table below reflects what is compiled into the library today, not what is pl
 | Barrier options | Yes | Yes | Yes | Reiner-Rubinstein closed forms + Brownian-bridge MC |
 | Asian options | Yes | Yes | Yes | Geometric closed form; arithmetic MC with geometric CV |
 | Lookback options | Yes | Yes | Yes | GSG / Conze-Viswanathan closed forms + bridge-extreme MC |
+| Digital options | Yes | Yes | Yes | Cash/asset-or-nothing closed forms + lattice; analytic delta |
 | `LongstaffSchwartz` | Yes | Yes | Yes | American exercise under Monte Carlo; quadratic basis |
 | Heston model | Yes | Yes | Yes | Little-trap characteristic function + full truncation MC |
 | Calibration | Yes | Yes | Yes | Implied vol surface; Nelder-Mead Heston fit |
@@ -64,7 +65,7 @@ The table below reflects what is compiled into the library today, not what is pl
 | `ImpliedVolatility` | Yes | Yes | Yes | Newton-Raphson with bracketed Brent fallback |
 | `ConvergenceAnalyzer` | Yes | Yes | Yes | Step/path sweeps, RMSE, CSV export |
 | `PerformanceBenchmark` | Yes | Yes | Yes | Adaptive batching; comparison table; CSV export |
-| Test suite (`tests/`) | — | Yes | Yes | 191 checks under CTest (197 when built with CUDA), no framework dependency |
+| Test suite (`tests/`) | — | Yes | Yes | 206 checks under CTest (212 when built with CUDA), no framework dependency |
 
 ---
 
@@ -106,6 +107,11 @@ The table below reflects what is compiled into the library today, not what is pl
 - Asian options with discrete arithmetic and geometric averaging: exact closed form for the
   geometric contract (the geometric mean of lognormals is lognormal), used both as a test
   reference and as a control variate that collapses the arithmetic estimator's variance
+- Digital (binary) options, cash-or-nothing and asset-or-nothing: closed forms with analytic
+  delta (including the at-the-money spike near expiry that makes digitals hard to hedge), the
+  exact decomposition `vanilla = asset-or-nothing − K · cash-or-nothing` pinned by test, and a
+  lattice pricer kept for what it teaches — a discontinuous payoff degrades the lattice's
+  smooth `O(1/N)` convergence to oscillating `O(1/√N)`
 - Lookback options, floating and fixed strike: Goldman-Sosin-Gatto and Conze-Viswanathan
   closed forms, cross-validated against a Monte Carlo pricer that samples the Brownian
   bridge's extreme between nodes so coarse paths price the continuously monitored contract
@@ -118,7 +124,7 @@ The table below reflects what is compiled into the library today, not what is pl
 - Implied volatility solver: Newton-Raphson on analytic vega, with a bracketed Brent fallback
   for the low-vega regions where Newton is unreliable, and no-arbitrage bound checks up front
 - Convergence analysis and performance benchmarking with CSV export
-- 191-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
+- 206-check test suite (parity, convergence, reference values, exercise-style properties) via CTest
 
 ---
 
@@ -780,6 +786,7 @@ option-converge/
 │       ├── BarrierOption.h         Barrier types, analytic + MC pricers
 │       ├── AsianOption.h           Asian types, geometric closed form + MC
 │       ├── LookbackOption.h        Lookback types, closed forms + bridge MC
+│       ├── DigitalOption.h         Digital types, closed forms + lattice
 │       ├── LongstaffSchwartz.h     American exercise under Monte Carlo
 │       ├── Heston.h                Stochastic volatility model + MC
 │       ├── Calibration.h           Vol surface + Heston calibration
@@ -796,6 +803,7 @@ option-converge/
 │   ├── BarrierOption.cpp       Reiner-Rubinstein formulas, bridge-corrected MC
 │   ├── AsianOption.cpp         Discrete geometric closed form, CV Monte Carlo
 │   ├── LookbackOption.cpp      GSG/Conze-Viswanathan formulas, bridge-extreme MC
+│   ├── DigitalOption.cpp       Digital closed forms, delta, indicator lattice
 │   ├── LongstaffSchwartz.cpp   Regression-based backward induction on paths
 │   ├── Heston.cpp              Characteristic-function integral, Euler MC
 │   ├── Calibration.cpp         Surface inversion, Nelder-Mead simplex
@@ -810,7 +818,7 @@ option-converge/
 │   └── plot_convergence.py     Renders results/*.csv into convergence, cost-accuracy,
 │                               and throughput plots (matplotlib)
 └── tests/
-    └── test_main.cpp           191-check suite run via CTest; exit code = failure count
+    └── test_main.cpp           206-check suite run via CTest; exit code = failure count
 ```
 
 | Path | Purpose |

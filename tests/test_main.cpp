@@ -7,6 +7,7 @@
 #include "options/BlackScholes.h"
 #include "options/Calibration.h"
 #include "options/CudaMonteCarlo.h"
+#include "options/DigitalOption.h"
 #include "options/ConvergenceAnalyzer.h"
 #include "options/FiniteDifference.h"
 #include "options/Heston.h"
@@ -120,6 +121,93 @@ void testBlackScholes() {
     american.exerciseType = ExerciseType::AMERICAN;
     checkThrows([&] { (void)BlackScholes().price(american); },
                 "BS rejects American options");
+}
+
+void testDigitalOptions() {
+    using namespace Options;
+    BlackScholes bs;
+
+    DigitalParams cashCall(kCall, DigitalType::CASH_OR_NOTHING);
+    DigitalParams cashPut(kPut, DigitalType::CASH_OR_NOTHING);
+    DigitalParams assetCall(kCall, DigitalType::ASSET_OR_NOTHING);
+    DigitalParams assetPut(kPut, DigitalType::ASSET_OR_NOTHING);
+
+    // The decomposition identity the header advertises: a vanilla is an
+    // asset-or-nothing minus K cash-or-nothings. Pinned against the
+    // independent BlackScholes engine, not against these formulas' own parts.
+    checkNear(AnalyticDigital::price(assetCall) - 100.0 * AnalyticDigital::price(cashCall),
+              bs.price(kCall).price, 1e-10, "vanilla call decomposes into digitals");
+    checkNear(100.0 * AnalyticDigital::price(cashPut) - AnalyticDigital::price(assetPut),
+              bs.price(kPut).price, 1e-10, "vanilla put decomposes into digitals");
+
+    // Digital parities: one of the two always pays.
+    checkNear(AnalyticDigital::price(cashCall) + AnalyticDigital::price(cashPut),
+              std::exp(-0.05), 1e-12, "cash digital parity sums to the bond");
+    checkNear(AnalyticDigital::price(assetCall) + AnalyticDigital::price(assetPut),
+              100.0, 1e-12, "asset digital parity sums to the forward spot");
+
+    // Payout scaling and bounds.
+    DigitalParams bigPayout(kCall, DigitalType::CASH_OR_NOTHING, 7.0);
+    checkNear(AnalyticDigital::price(bigPayout), 7.0 * AnalyticDigital::price(cashCall),
+              1e-12, "cash digital is linear in the payout");
+    check(AnalyticDigital::price(cashCall) < std::exp(-0.05),
+          "cash digital bounded by the discounted payout");
+
+    // Analytic delta against a central difference of the analytic price.
+    {
+        const double h = 0.01;
+        OptionParams up = kCall, down = kCall;
+        up.spotPrice += h;
+        down.spotPrice -= h;
+        const double fd = (AnalyticDigital::price(DigitalParams(up, DigitalType::CASH_OR_NOTHING)) -
+                           AnalyticDigital::price(DigitalParams(down, DigitalType::CASH_OR_NOTHING))) /
+                          (2.0 * h);
+        checkNear(AnalyticDigital::delta(cashCall), fd, 1e-6,
+                  "cash digital delta matches finite difference");
+        const double fdAsset =
+            (AnalyticDigital::price(DigitalParams(up, DigitalType::ASSET_OR_NOTHING)) -
+             AnalyticDigital::price(DigitalParams(down, DigitalType::ASSET_OR_NOTHING))) /
+            (2.0 * h);
+        checkNear(AnalyticDigital::delta(assetCall), fdAsset, 1e-6,
+                  "asset digital delta matches finite difference");
+    }
+
+    // The hedging pathology: at the money the delta blows up as expiry
+    // approaches, like 1/(sigma sqrt(T)).
+    {
+        OptionParams shortDated = kCall;
+        shortDated.timeToMaturity = 0.01;
+        DigitalParams spike(shortDated, DigitalType::CASH_OR_NOTHING);
+        check(AnalyticDigital::delta(spike) > 5.0 * AnalyticDigital::delta(cashCall),
+              "digital delta spikes near expiry at the strike");
+    }
+
+    // Lattice pricing of the indicator payoff: convergence is O(1/sqrt(N))
+    // with oscillation, not the smooth O(1/N) of continuous payoffs, so the
+    // tolerances here are deliberately loose.
+    DigitalLattice lattice(2000);
+    checkNear(lattice.price(cashCall), AnalyticDigital::price(cashCall), 0.02,
+              "lattice cash digital near analytic (oscillating convergence)");
+    checkNear(lattice.price(assetCall), AnalyticDigital::price(assetCall), 2.0,
+              "lattice asset digital near analytic (oscillating convergence)");
+
+    checkThrows([] { DigitalParams(kCall, DigitalType::CASH_OR_NOTHING, -1.0); },
+                "non-positive payout rejected");
+    checkThrows(
+        [] {
+            OptionParams american = kCall;
+            american.exerciseType = ExerciseType::AMERICAN;
+            DigitalParams(american, DigitalType::CASH_OR_NOTHING);
+        },
+        "American digital rejected");
+    checkThrows(
+        [] {
+            OptionParams div = kCall;
+            div.addDividend(0.5, 3.0);
+            DigitalParams(div, DigitalType::CASH_OR_NOTHING);
+        },
+        "dividend-paying digital rejected");
+    checkThrows([] { DigitalLattice(0); }, "zero-step digital lattice rejected");
 }
 
 void testLookbackOptions() {
@@ -1037,6 +1125,7 @@ int main() {
     testEngineCopySemantics();
     testBinomialTree();
     testDiscreteDividends();
+    testDigitalOptions();
     testLookbackOptions();
     testCudaMonteCarlo();
     testMonteCarlo();

@@ -73,6 +73,7 @@ set(SOURCES
     src/BarrierOption.cpp
     src/BinomialTree.cpp
     src/Calibration.cpp
+    src/DigitalOption.cpp
     src/FiniteDifference.cpp
     src/Heston.cpp
     src/ImpliedVolatility.cpp
